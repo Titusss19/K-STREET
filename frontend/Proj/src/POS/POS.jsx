@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import axios from "axios";
+import html2canvas from "html2canvas";
 
 const FoodHubPOS = () => {
   const [orderType, setOrderType] = useState("Dine In");
@@ -7,16 +8,12 @@ const FoodHubPOS = () => {
   const [paymentAmount, setPaymentAmount] = useState("");
   const [activeCategory, setActiveCategory] = useState("All");
   const [searchTerm, setSearchTerm] = useState("");
-  const [discountApplied, setDiscountApplied] = useState(false); // ✅ Discount flag
-
-  const [products, setProducts] = useState([]); // Fetched from DB
+  const [discountApplied, setDiscountApplied] = useState(false);
+  const [products, setProducts] = useState([]);
   const [categories, setCategories] = useState([]);
-
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [paymentResult, setPaymentResult] = useState(null);
   const [changeAmount, setChangeAmount] = useState(0);
-
-  const [showReceiptModal, setShowReceiptModal] = useState(false);
   const [receiptContent, setReceiptContent] = useState("");
 
   // Fetch products from backend
@@ -89,7 +86,7 @@ const FoodHubPOS = () => {
     const subtotal = calculateSubtotal();
     const Tax = subtotal * 0.12;
     let total = subtotal + Tax;
-    if (discountApplied) total *= 0.8; // Apply 20% discount
+    if (discountApplied) total *= 0.8;
     return total;
   };
 
@@ -99,9 +96,8 @@ const FoodHubPOS = () => {
   const taxPercentage = subtotal > 0 ? (Tax / subtotal) * 100 : 0;
 
   // --- Payment ---
-  const handlePayment = () => {
+  const handlePayment = async () => {
     const amount = parseFloat(paymentAmount);
-
     if (!paymentAmount || amount <= 0) {
       setPaymentResult({
         type: "error",
@@ -113,35 +109,25 @@ const FoodHubPOS = () => {
       return;
     }
 
-    if (amount >= total) {
-      const change = amount - total;
-      setChangeAmount(change);
-      setPaymentResult({
-        type: "success",
-        title: "Payment Successful!",
-        message: `Payment of P${amount.toFixed(2)} received.`,
-        change: change,
-      });
-    } else {
+    if (amount < total) {
       setPaymentResult({
         type: "error",
         title: "Insufficient Amount",
-        message: `The amount entered is less than the total.`,
+        message: "The amount entered is less than the total.",
         required: total,
       });
+      setShowPaymentModal(true);
+      return;
     }
 
-    setShowPaymentModal(true);
-  };
+    const change = amount - total;
+    setChangeAmount(change);
 
-  // --- Receipt ---
-  const handlePrintReceipt = () => {
-    const receipt = `
-FOOD HUB RECEIPT
+    // Generate receipt string
+    const receipt = `FOOD HUB RECEIPT
 ====================
 Order Type: ${orderType}
 Date: ${new Date().toLocaleString()}
-
 Items:
 ${cart
   .map(
@@ -151,27 +137,130 @@ ${cart
       )}`
   )
   .join("\n")}
-
 Subtotal: P${subtotal.toFixed(2)}
 Tax: P${Tax.toFixed(2)}
 ${discountApplied ? "Discount (20%): Applied\n" : ""}
 Total: P${total.toFixed(2)}
-Amount Paid: P${parseFloat(paymentAmount).toFixed(2)}
-Change: P${changeAmount.toFixed(2)}
+Amount Paid: P${amount.toFixed(2)}
+Change: P${change.toFixed(2)}
 
-Thank you for your order!
-`;
+Thank you for your order!`;
 
     setReceiptContent(receipt);
-    setShowReceiptModal(true);
-    setShowPaymentModal(false);
-    clearCart();
+
+    const user = JSON.parse(localStorage.getItem("user"));
+    const userId = user?.id;
+    if (!userId) {
+      setPaymentResult({
+        type: "error",
+        title: "User Not Logged In",
+        message: "Cannot process order without login.",
+      });
+      setShowPaymentModal(true);
+      return;
+    }
+
+    try {
+      const res = await axios.post("http://localhost:3002/orders", {
+        userId,
+        cart,
+        total,
+        discountApplied,
+        changeAmount: change,
+        orderType,
+      });
+
+      console.log("Backend response:", res.data);
+
+      setPaymentResult({
+        type: "success",
+        title: "Payment Successful!",
+        message: `Payment of P${amount.toFixed(2)} received.`,
+        change: change,
+      });
+      setShowPaymentModal(true);
+      clearCart();
+    } catch (err) {
+      console.error("Failed to save order:", err);
+      setPaymentResult({
+        type: "error",
+        title: "Order Failed",
+        message: "Could not save order. Please try again.",
+      });
+      setShowPaymentModal(true);
+    }
   };
 
   // --- Apply Discount ---
   const applyDiscount = () => {
     if (!discountApplied) setDiscountApplied(true);
   };
+
+  // --- Print Receipt ---
+  const handlePrintReceipt = () => {
+    const printWindow = window.open("", "PRINT", "height=700,width=700");
+    printWindow.document.write(`
+      <html>
+      <head>
+        <title>Receipt</title>
+        <style>
+          body { font-family: 'Courier New', monospace; margin:0; padding:10px; display:flex; flex-direction:column; align-items:center; justify-content:center; min-height:100vh; font-size:12px; background:white; }
+          .receipt-container { text-align:center; width:250px; max-width:100%; }
+          .receipt-header { font-weight:bold; font-size:14px; margin-bottom:10px; border-bottom:1px dashed #000; padding-bottom:5px; width:100%; }
+          .receipt-content { text-align:center; width:100%; line-height:1.3; }
+          .receipt-line { width:100%; margin:2px 0; }
+          .divider { border-top:1px dashed #000; margin:8px 0; width:100%; }
+          @media print { body { padding:5px; } .receipt-container { width:240px !important; } }
+        </style>
+      </head>
+      <body>
+        <div class="receipt-container">
+          <div class="receipt-header">FOOD HUB RECEIPT</div>
+          <div class="receipt-content">
+            <pre class="whitespace-pre-wrap">${receiptContent}</pre>
+          </div>
+        </div>
+      </body>
+      </html>
+    `);
+    printWindow.document.close();
+    printWindow.focus();
+    setTimeout(() => {
+      printWindow.print();
+      printWindow.close();
+    }, 250);
+  };
+
+  // --- Save Receipt as PNG ---
+const handleSaveReceiptAsImage = () => {
+  const user = JSON.parse(localStorage.getItem("user"));
+  const cashierId = user?.id ?? "Unknown";
+
+  // Add Cashier ID at the top without duplicating header
+  const receiptWithCashier = receiptContent.replace(
+    "FOOD HUB RECEIPT",
+    `FOOD HUB RECEIPT\nCashier ID: ${cashierId}`
+  );
+
+  const tempDiv = document.createElement("div");
+  tempDiv.style.position = "absolute";
+  tempDiv.style.left = "-9999px";
+  tempDiv.style.padding = "20px";
+  tempDiv.style.background = "#fff";
+  tempDiv.style.fontFamily = "'Courier New', monospace";
+  tempDiv.style.whiteSpace = "pre-wrap";
+  tempDiv.innerText = receiptWithCashier;
+  document.body.appendChild(tempDiv);
+
+  html2canvas(tempDiv).then((canvas) => {
+    const link = document.createElement("a");
+    link.download = `receipt_${Date.now()}.png`;
+    link.href = canvas.toDataURL();
+    link.click();
+    document.body.removeChild(tempDiv);
+  });
+};
+
 
   return (
     <div className="min-h-screen bg-gray-100 p-4">
@@ -221,13 +310,13 @@ Thank you for your order!
           </div>
         </div>
 
+        {/* Body */}
         <div className="flex flex-col lg:flex-row">
           {/* Product List Section */}
           <div className="lg:w-2/3 p-6 border-r border-gray-200">
             <h2 className="text-2xl font-bold text-gray-800 mb-4">
               Product List
             </h2>
-
             {/* Search and Category Filter */}
             <div className="flex flex-col md:flex-row gap-4 mb-6">
               <div className="flex-1">
@@ -255,7 +344,6 @@ Thank you for your order!
                 ))}
               </div>
             </div>
-
             {/* Product Grid */}
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-6">
               {filteredProducts.map((product) => (
@@ -263,7 +351,6 @@ Thank you for your order!
                   key={product.id}
                   className="border border-gray-200 rounded-xl p-4 hover:shadow-lg transition-shadow duration-300"
                 >
-                  {/* Product Image */}
                   <div className="h-40 rounded-lg mb-3 overflow-hidden flex items-center justify-center bg-gray-100">
                     {product.image ? (
                       <img
@@ -285,8 +372,7 @@ Thank you for your order!
                   </p>
                   <div className="flex justify-between items-center">
                     <span className="text-green-600 font-bold text-xl">
-                      P{(product.price * 1.12).toFixed(2)}{" "}
-                      {/* Price + 12% tax */}
+                      P{(product.price * 1.12).toFixed(2)}
                     </span>
                     <button
                       className="bg-green-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-green-700 transition-colors focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2"
@@ -320,7 +406,7 @@ Thank you for your order!
                 className={`w-full py-3 rounded-lg font-medium text-white ${
                   discountApplied
                     ? "bg-gray-400 cursor-not-allowed"
-                    : "bg-purple-600 hover:bg-purple-700"
+                    : "bg-green-600 hover:bg-green-700"
                 }`}
                 onClick={applyDiscount}
                 disabled={discountApplied}
@@ -433,7 +519,6 @@ Thank you for your order!
                     P1000
                   </button>
                 </div>
-
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     Enter amount
@@ -446,9 +531,8 @@ Thank you for your order!
                     placeholder="0.00"
                   />
                 </div>
-
                 <button
-                  className="w-full bg-green-600 text-white py-4 rounded-lg font-semibold text-lg hover:bg-green-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2"
+                  className="w-full bg-green-600 text-white py-4 rounded-lg font-semibold text-lg hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2"
                   onClick={handlePayment}
                   disabled={cart.length === 0}
                 >
@@ -459,43 +543,6 @@ Thank you for your order!
           </div>
         </div>
       </div>
-
-      {/* --- Receipt Modal --- */}
-      {showReceiptModal && (
-        <div className="fixed inset-0 flex items-center justify-center z-50">
-          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full mx-4 items-center justify-center">
-            <div className="p-4 bg-green-600 text-white rounded-t-2xl flex justify-between items-center">
-              <h3 className="text-xl font-bold">Receipt</h3>
-              <button
-                onClick={() => setShowReceiptModal(false)}
-                className="text-white hover:text-gray-200 text-2xl"
-              >
-                ×
-              </button>
-            </div>
-            <div className="p-6 max-h-96 overflow-y-auto">
-              <pre className="whitespace-pre-wrap font-mono text-sm text-gray-800">
-                {receiptContent}
-              </pre>
-            </div>
-            <div className="p-4 flex space-x-3">
-              <button
-                onClick={() => window.print()}
-                className="flex-1 bg-green-600 text-white py-2 rounded-lg font-medium hover:bg-green-700"
-              >
-                Print
-              </button>
-              <button
-                onClick={() => setShowReceiptModal(false)}
-                className="flex-1 bg-gray-500 text-white py-2 rounded-lg font-medium hover:bg-gray-600"
-              >
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* --- Payment Modal --- */}
       {showPaymentModal && (
         <div className="fixed inset-0 flex items-center justify-center z-50">
@@ -573,24 +620,32 @@ Thank you for your order!
                     Cancel
                   </button>
                 )}
-                <button
-                  onClick={() => {
-                    if (paymentResult.type === "success") {
-                      handlePrintReceipt();
-                    } else {
-                      setShowPaymentModal(false);
-                    }
-                  }}
-                  className={`flex-1 py-3 rounded-lg font-medium transition-colors ${
-                    paymentResult.type === "success"
-                      ? "bg-green-500 text-white hover:bg-green-600"
-                      : "bg-blue-500 text-white hover:bg-blue-600"
-                  }`}
-                >
-                  {paymentResult.type === "success"
-                    ? "Print Receipt"
-                    : "Try Again"}
-                </button>
+
+                {paymentResult.type === "success" && (
+                  <>
+                    <button
+                      onClick={handlePrintReceipt}
+                      className="flex-1 py-3 rounded-lg font-medium bg-green-500 text-white hover:bg-green-600 transition-colors"
+                    >
+                      Print Receipt
+                    </button>
+                    <button
+                      onClick={handleSaveReceiptAsImage}
+                      className="flex-1 py-3 rounded-lg font-medium bg-yellow-500 text-white hover:bg-yellow-600 transition-colors"
+                    >
+                      Save as PNG
+                    </button>
+                  </>
+                )}
+
+                {paymentResult.type === "error" && (
+                  <button
+                    onClick={() => setShowPaymentModal(false)}
+                    className="flex-1 py-3 rounded-lg font-medium bg-blue-500 text-white hover:bg-blue-600 transition-colors"
+                  >
+                    Try Again
+                  </button>
+                )}
               </div>
             </div>
           </div>
@@ -601,4 +656,3 @@ Thank you for your order!
 };
 
 export default FoodHubPOS;
-

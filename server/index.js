@@ -29,23 +29,22 @@ db.connect((err) => {
 app.post("/register", async (req, res) => {
   try {
     const { email, password, confirmPassword } = req.body;
-
     if (!email || !password || !confirmPassword)
       return res
         .status(400)
-        .json({ success: false, message: "Lahat ng fields ay kailangan" });
+        .json({ success: false, message: "All fields are required" });
 
     if (password !== confirmPassword)
       return res
         .status(400)
-        .json({ success: false, message: "Hindi magkapareho ang password" });
+        .json({ success: false, message: "Passwords do not match" });
 
     if (password.length < 6)
       return res
         .status(400)
         .json({
           success: false,
-          message: "Password ay dapat hindi bababa sa 6 na karakter",
+          message: "Password must be at least 6 characters",
         });
 
     db.execute(
@@ -59,10 +58,7 @@ app.post("/register", async (req, res) => {
         if (results.length > 0)
           return res
             .status(400)
-            .json({
-              success: false,
-              message: "May existing account na gamit ang email na ito",
-            });
+            .json({ success: false, message: "Email already exists" });
 
         const hashedPassword = await bcrypt.hash(password, 10);
         db.execute(
@@ -72,15 +68,12 @@ app.post("/register", async (req, res) => {
             if (err)
               return res
                 .status(500)
-                .json({
-                  success: false,
-                  message: "Error sa paggawa ng account",
-                });
+                .json({ success: false, message: "Error creating account" });
             res
               .status(201)
               .json({
                 success: true,
-                message: "Matagumpay na nagawa ang account!",
+                message: "Account created",
                 userId: results.insertId,
               });
           }
@@ -94,13 +87,13 @@ app.post("/register", async (req, res) => {
 });
 
 // Login
-app.post("/login", async (req, res) => {
+app.post("/login", (req, res) => {
   try {
     const { email, password } = req.body;
     if (!email || !password)
       return res
         .status(400)
-        .json({ success: false, message: "Email and password are required" });
+        .json({ success: false, message: "Email and password required" });
 
     db.execute(
       "SELECT * FROM users WHERE email = ?",
@@ -125,7 +118,7 @@ app.post("/login", async (req, res) => {
         res.json({
           success: true,
           message: "Login successful",
-          user: { id: user.id, email: user.email, created_at: user.created_at },
+          user: { id: user.id, email: user.email },
         });
       }
     );
@@ -188,7 +181,7 @@ app.put("/items/:id", (req, res) => {
   db.execute(
     "UPDATE items SET name = ?, category = ?, price = ?, image = ? WHERE id = ?",
     [name, category, price, image, id],
-    (err, results) => {
+    (err) => {
       if (err)
         return res.status(500).json({ success: false, message: err.message });
       res.json({ success: true, message: "Item updated" });
@@ -199,14 +192,42 @@ app.put("/items/:id", (req, res) => {
 // Delete item
 app.delete("/items/:id", (req, res) => {
   const { id } = req.params;
-  db.execute("DELETE FROM items WHERE id = ?", [id], (err, results) => {
+  db.execute("DELETE FROM items WHERE id = ?", [id], (err) => {
     if (err)
       return res.status(500).json({ success: false, message: err.message });
     res.json({ success: true, message: "Item deleted" });
   });
 });
 
-// Test
+// ------------------ ORDERS ------------------
+// Save order
+// Save order
+app.post("/orders", (req, res) => {
+  const { userId, paidAmount, total, discountApplied, changeAmount, orderType } = req.body;
+
+  if (!userId || !paidAmount)
+    return res.status(400).json({ message: "Invalid order data" });
+
+  const query = `
+    INSERT INTO orders (userId, paidAmount, total, discountApplied, changeAmount, orderType)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `;
+
+  db.query(
+    query,
+    [userId, paidAmount, total, discountApplied ? 1 : 0, changeAmount, orderType],
+    (err, result) => {
+      if (err) {
+        console.error("Failed to save order:", err);
+        return res.status(500).json({ message: "Failed to save order" });
+      }
+      res.status(200).json({ message: "Order saved successfully", orderId: result.insertId });
+    }
+  );
+});
+
+
+// ------------------ Test ------------------
 app.get("/", (req, res) => {
   res.json({
     message: "Backend is running!",
@@ -215,10 +236,12 @@ app.get("/", (req, res) => {
       login: "POST /login",
       users: "GET /users",
       items: "GET /items",
+      orders: "POST /orders",
     },
   });
 });
 
+// Start server
 app.listen(PORT, () =>
   console.log(`Server running on http://localhost:${PORT}`)
 );
