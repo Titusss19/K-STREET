@@ -86,7 +86,7 @@ const FoodHubPOS = () => {
     const subtotal = calculateSubtotal();
     const additionalFee = subtotal > 0 ? 0 : 0;
     const Tax = subtotal > 0 ? subtotal * 0.12 : 0; // Fixed 12%
-    const discount = subtotal >= 1000 ? 100 : 0;
+    const discount = subtotal >= 0 ? 0 : 0;
     return subtotal + additionalFee + Tax - discount;
   };
 
@@ -171,7 +171,7 @@ const FoodHubPOS = () => {
   const subtotal = calculateSubtotal();
   const additionalFee = subtotal > 0 ? 0 : 0;
   const Tax = subtotal > 0 ? subtotal * 0.12 : 0;
-  const discount = subtotal >= 1000 ? 100 : 0;
+  const discount = subtotal >= 0 ? 0 : 0;
   const total = calculateTotal();
   const taxPercentage = subtotal > 0 ? (Tax / subtotal) * 100 : 0;
 

@@ -1,4 +1,5 @@
 const express = require("express");
+const router = express.Router();
 const cors = require("cors");
 const bcrypt = require("bcryptjs");
 const mysql = require("mysql2");
@@ -207,3 +208,36 @@ app.post('/login', async (req, res) => {
     });
   }
 });
+
+
+
+// Temporary in-memory (palitan mo ng DB kagaya ng MongoDB/MySQL)
+let sales = [];
+
+router.post("/", (req, res) => {
+  const { items, total, paid, change, cashier } = req.body;
+  const sale = {
+    id: sales.length + 1,
+    date: new Date().toISOString(),
+    items,
+    total,
+    paid,
+    change,
+    cashier,
+  };
+  sales.push(sale);
+  res.status(201).json(sale);
+});
+
+router.get("/", (req, res) => {
+  res.json(sales);
+});
+
+app.use(cors());
+app.use(express.json());
+
+app.use("/api/sales", salesRoutes);
+
+app.listen(5000, () => console.log("Server running on port 5000"));
+
+module.exports = router;

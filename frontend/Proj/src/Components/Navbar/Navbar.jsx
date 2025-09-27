@@ -1,14 +1,14 @@
-import React from 'react';
-import { Clipboard, Home, ShoppingBag, ShoppingCart } from "lucide-react";
+import React from "react";
+import { Clipboard, Home, Newspaper, ShoppingCart } from "lucide-react";
 
-function Navbar({ 
-  user, 
-  activeView, 
-  onViewChange, 
+function Navbar({
+  user,
+  activeView,
+  onViewChange,
   onLogout,
   logoText = "FH",
   systemName = "Food Hub System",
-  showWelcome = true 
+  showWelcome = true,
 }) {
   return (
     <header className="bg-white shadow-lg sticky top-0 z-10">
@@ -38,11 +38,11 @@ function Navbar({
             >
               <Home
                 className={`w-6 h-6 transition-colors duration-200 
-      ${
-        activeView === "dashboard"
-          ? "text-green-600"
-          : "text-gray-600 hover:text-green-600"
-      }`}
+                  ${
+                    activeView === "dashboard"
+                      ? "text-green-600"
+                      : "text-gray-600 hover:text-green-600"
+                  }`}
               />
             </button>
 
@@ -52,25 +52,39 @@ function Navbar({
             >
               <ShoppingCart
                 className={`w-6 h-6 transition-colors duration-200 
-      ${
-        activeView === "pos"
-          ? "text-green-600"
-          : "text-gray-600 hover:text-green-600"
-      }`}
+                  ${
+                    activeView === "pos"
+                      ? "text-green-600"
+                      : "text-gray-600 hover:text-green-600"
+                  }`}
               />
             </button>
 
             <button
-              onClick={() => onViewChange("report")}
+              onClick={() => onViewChange("sales")}
               className="px-1 py-3 rounded-lg font-medium transition-all duration-200 flex items-center justify-center "
             >
               <Clipboard
                 className={`w-6 h-6 transition-colors duration-200 
-      ${
-        activeView === "report"
-          ? "text-green-600"
-          : "text-gray-600 hover:text-green-600"
-      }`}
+                  ${
+                    activeView === "sales"
+                      ? "text-green-600"
+                      : "text-gray-600 hover:text-green-600"
+                  }`}
+              />
+            </button>
+
+            <button
+              onClick={() => onViewChange("Items")}
+              className="px-1 py-3 rounded-lg font-medium transition-all duration-200 flex items-center justify-center "
+            >
+              <Newspaper
+                className={`w-6 h-6 transition-colors duration-200 
+                  ${
+                    activeView === "Items"
+                      ? "text-green-600"
+                      : "text-gray-600 hover:text-green-600"
+                  }`}
               />
             </button>
 

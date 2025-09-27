@@ -1,17 +1,20 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import Navbar from "../Components/Navbar/Navbar";
-import FoodHubPOS from "../POS/POS"; // ✅ Correct import path
+import FoodHubPOS from "../POS/POS";
+import Sales from "../Sales/Sales";
+import Items from "../Items/Items";
 
-// Updated Dashboard Component with POS Integration
 export default function Dashboard() {
   const [user, setUser] = useState(null);
   const [activeView, setActiveView] = useState("dashboard");
+  const [timeIn, setTimeIn] = useState(null);
   const navigate = useNavigate();
 
   useEffect(() => {
     const userData = localStorage.getItem("user");
     const isLoggedIn = localStorage.getItem("isLoggedIn");
+    const storedTimeIn = localStorage.getItem("timeIn");
 
     if (!isLoggedIn || !userData) {
       navigate("/login");
@@ -19,11 +22,21 @@ export default function Dashboard() {
     }
 
     setUser(JSON.parse(userData));
+
+    // kung walang naka-save na timeIn, iset ngayon
+    if (!storedTimeIn) {
+      const now = new Date().toISOString();
+      localStorage.setItem("timeIn", now);
+      setTimeIn(now);
+    } else {
+      setTimeIn(storedTimeIn);
+    }
   }, [navigate]);
 
   const handleLogout = () => {
     localStorage.removeItem("user");
     localStorage.removeItem("isLoggedIn");
+    localStorage.removeItem("timeIn");
     navigate("/login");
   };
 
@@ -70,12 +83,6 @@ export default function Dashboard() {
                     <div className="space-y-4">
                       <div>
                         <label className="font-medium text-gray-600">
-                          User ID:
-                        </label>
-                        <p className="text-gray-800 text-lg">{user.id}</p>
-                      </div>
-                      <div>
-                        <label className="font-medium text-gray-600">
                           Email:
                         </label>
                         <p className="text-gray-800 text-lg">{user.email}</p>
@@ -95,10 +102,25 @@ export default function Dashboard() {
                           )}
                         </p>
                       </div>
+                      <div>
+                        <label className="font-medium text-gray-600">
+                          Time In:
+                        </label>
+                        <p className="text-gray-800 text-lg">
+                          {timeIn
+                            ? new Date(timeIn).toLocaleTimeString("en-US", {
+                                hour: "2-digit",
+                                minute: "2-digit",
+                                second: "2-digit",
+                              })
+                            : "N/A"}
+                        </p>
+                      </div>
                     </div>
                   </div>
                 </div>
 
+                {/* Right side content */}
                 <div className="space-y-6">
                   <div className="bg-gradient-to-r from-blue-50 to-blue-100 p-6 rounded-xl">
                     <h3 className="font-semibold text-blue-800 mb-4">
@@ -137,8 +159,11 @@ export default function Dashboard() {
                       >
                         New Order
                       </button>
-                      <button className="bg-blue-500 text-white py-3 rounded-lg font-medium hover:bg-blue-600 transition-colors">
-                        View Reports
+                      <button
+                        onClick={() => setActiveView("sales")}
+                        className="bg-blue-500 text-white py-3 rounded-lg font-medium hover:bg-blue-600 transition-colors"
+                      >
+                        Sales
                       </button>
                     </div>
                   </div>
@@ -146,9 +171,13 @@ export default function Dashboard() {
               </div>
             </div>
           </div>
-        ) : (
+        ) : activeView === "pos" ? (
           <FoodHubPOS />
-        )}
+        ) : activeView === "sales" ? (
+          <Sales />
+        ) : activeView === "Items" ? (
+          <Items />
+        ) : null}
       </main>
     </div>
   );
