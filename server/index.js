@@ -1,8 +1,8 @@
 const express = require("express");
-const router = express.Router();
 const cors = require("cors");
 const bcrypt = require("bcryptjs");
 const mysql = require("mysql2");
+
 const app = express();
 const PORT = 3002;
 
@@ -10,234 +10,215 @@ const PORT = 3002;
 app.use(cors());
 app.use(express.json());
 
-// Database connection - PALITAN MO NG SARILING CREDENTIALS
+// Database connection
 const db = mysql.createConnection({
   host: "localhost",
-  user: "root", // palitan ng username mo
-  password: "", // palitan ng password mo
-  database: "db", // palitan ng database name
+  user: "root",
+  password: "",
+  database: "db",
 });
 
-// Connect to database
 db.connect((err) => {
-  if (err) {
-    console.error("Database connection failed: ", err);
-    return;
-  }
-  console.log("Connected to MySQL database");
+  if (err) console.error("Database connection failed: ", err);
+  else console.log("Connected to MySQL database");
 });
 
-// Register endpoint
+// ------------------ AUTH ------------------
+
+// Register
 app.post("/register", async (req, res) => {
   try {
     const { email, password, confirmPassword } = req.body;
 
-    // Validation
-    if (!email || !password || !confirmPassword) {
-      return res.status(400).json({
-        success: false,
-        message: "Lahat ng fields ay kailangan",
-      });
-    }
+    if (!email || !password || !confirmPassword)
+      return res
+        .status(400)
+        .json({ success: false, message: "Lahat ng fields ay kailangan" });
 
-    if (password !== confirmPassword) {
-      return res.status(400).json({
-        success: false,
-        message: "Hindi magkapareho ang password",
-      });
-    }
+    if (password !== confirmPassword)
+      return res
+        .status(400)
+        .json({ success: false, message: "Hindi magkapareho ang password" });
 
-    if (password.length < 6) {
-      return res.status(400).json({
-        success: false,
-        message: "Password ay dapat hindi bababa sa 6 na karakter",
-      });
-    }
-
-    // Check if user already exists
-    const checkUserQuery = "SELECT * FROM users WHERE email = ?";
-
-    db.execute(checkUserQuery, [email], async (err, results) => {
-      if (err) {
-        console.error("Database error: ", err);
-        return res.status(500).json({
+    if (password.length < 6)
+      return res
+        .status(400)
+        .json({
           success: false,
-          message: "Server error",
+          message: "Password ay dapat hindi bababa sa 6 na karakter",
         });
+
+    db.execute(
+      "SELECT * FROM users WHERE email = ?",
+      [email],
+      async (err, results) => {
+        if (err)
+          return res
+            .status(500)
+            .json({ success: false, message: "Server error" });
+        if (results.length > 0)
+          return res
+            .status(400)
+            .json({
+              success: false,
+              message: "May existing account na gamit ang email na ito",
+            });
+
+        const hashedPassword = await bcrypt.hash(password, 10);
+        db.execute(
+          "INSERT INTO users (email, password) VALUES (?, ?)",
+          [email, hashedPassword],
+          (err, results) => {
+            if (err)
+              return res
+                .status(500)
+                .json({
+                  success: false,
+                  message: "Error sa paggawa ng account",
+                });
+            res
+              .status(201)
+              .json({
+                success: true,
+                message: "Matagumpay na nagawa ang account!",
+                userId: results.insertId,
+              });
+          }
+        );
       }
-
-      if (results.length > 0) {
-        return res.status(400).json({
-          success: false,
-          message: "May existing account na gamit ang email na ito",
-        });
-      }
-
-      // Hash password
-      const saltRounds = 10;
-      const hashedPassword = await bcrypt.hash(password, saltRounds);
-
-      // Insert new user
-      const insertUserQuery =
-        "INSERT INTO users (email, password, created_at) VALUES (?, ?, NOW())";
-
-      db.execute(insertUserQuery, [email, hashedPassword], (err, results) => {
-        if (err) {
-          console.error("Error creating user: ", err);
-          return res.status(500).json({
-            success: false,
-            message: "Error sa paggawa ng account",
-          });
-        }
-
-        res.status(201).json({
-          success: true,
-          message: "Matagumpay na nagawa ang account!",
-          userId: results.insertId,
-        });
-      });
-    });
+    );
   } catch (error) {
-    console.error("Registration error: ", error);
-    res.status(500).json({
-      success: false,
-      message: "Internal server error",
-    });
+    console.error(error);
+    res.status(500).json({ success: false, message: "Internal server error" });
   }
 });
 
-// Get all users endpoint
+// Login
+app.post("/login", async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    if (!email || !password)
+      return res
+        .status(400)
+        .json({ success: false, message: "Email and password are required" });
+
+    db.execute(
+      "SELECT * FROM users WHERE email = ?",
+      [email],
+      async (err, results) => {
+        if (err)
+          return res
+            .status(500)
+            .json({ success: false, message: "Server error" });
+        if (results.length === 0)
+          return res
+            .status(400)
+            .json({ success: false, message: "User not found" });
+
+        const user = results[0];
+        const isPasswordValid = await bcrypt.compare(password, user.password);
+        if (!isPasswordValid)
+          return res
+            .status(400)
+            .json({ success: false, message: "Invalid password" });
+
+        res.json({
+          success: true,
+          message: "Login successful",
+          user: { id: user.id, email: user.email, created_at: user.created_at },
+        });
+      }
+    );
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, message: "Internal server error" });
+  }
+});
+
+// Get all users
 app.get("/users", (req, res) => {
-  const getUsersQuery =
-    "SELECT id, email, created_at FROM users ORDER BY created_at DESC";
-
-  db.execute(getUsersQuery, (err, results) => {
-    if (err) {
-      console.error("Error fetching users: ", err);
-      return res.status(500).json({
-        success: false,
-        message: "Error fetching users",
-      });
+  db.execute(
+    "SELECT id, email, created_at FROM users ORDER BY created_at DESC",
+    (err, results) => {
+      if (err)
+        return res
+          .status(500)
+          .json({ success: false, message: "Error fetching users" });
+      res.json({ success: true, users: results });
     }
+  );
+});
 
-    res.json({
-      success: true,
-      users: results,
-    });
+// ------------------ ITEMS ------------------
+
+// Get all items
+app.get("/items", (req, res) => {
+  db.execute("SELECT * FROM items ORDER BY created_at DESC", (err, results) => {
+    if (err)
+      return res.status(500).json({ success: false, message: err.message });
+    res.json(results);
   });
 });
 
-// Test endpoint
+// Add item
+app.post("/items", (req, res) => {
+  const { name, category, price, image } = req.body;
+  if (!name || !category || !price || !image)
+    return res
+      .status(400)
+      .json({ success: false, message: "All fields are required" });
+
+  db.execute(
+    "INSERT INTO items (name, category, price, image) VALUES (?, ?, ?, ?)",
+    [name, category, price, image],
+    (err, results) => {
+      if (err)
+        return res.status(500).json({ success: false, message: err.message });
+      res
+        .status(201)
+        .json({ id: results.insertId, name, category, price, image });
+    }
+  );
+});
+
+// Update item
+app.put("/items/:id", (req, res) => {
+  const { id } = req.params;
+  const { name, category, price, image } = req.body;
+  db.execute(
+    "UPDATE items SET name = ?, category = ?, price = ?, image = ? WHERE id = ?",
+    [name, category, price, image, id],
+    (err, results) => {
+      if (err)
+        return res.status(500).json({ success: false, message: err.message });
+      res.json({ success: true, message: "Item updated" });
+    }
+  );
+});
+
+// Delete item
+app.delete("/items/:id", (req, res) => {
+  const { id } = req.params;
+  db.execute("DELETE FROM items WHERE id = ?", [id], (err, results) => {
+    if (err)
+      return res.status(500).json({ success: false, message: err.message });
+    res.json({ success: true, message: "Item deleted" });
+  });
+});
+
+// Test
 app.get("/", (req, res) => {
   res.json({
     message: "Backend is running!",
     endpoints: {
       register: "POST /register",
+      login: "POST /login",
       users: "GET /users",
+      items: "GET /items",
     },
   });
 });
 
-app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
-});
-
-
-//LOGINN
-// Login endpoint
-app.post('/login', async (req, res) => {
-  try {
-    const { email, password } = req.body;
-
-    // Validation
-    if (!email || !password) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Email and password are required' 
-      });
-    }
-
-    // Check if user exists
-    const checkUserQuery = 'SELECT * FROM users WHERE email = ?';
-    
-    db.execute(checkUserQuery, [email], async (err, results) => {
-      if (err) {
-        console.error('Database error: ', err);
-        return res.status(500).json({ 
-          success: false, 
-          message: 'Server error' 
-        });
-      }
-
-      if (results.length === 0) {
-        return res.status(400).json({ 
-          success: false, 
-          message: 'User not found' 
-        });
-      }
-
-      const user = results[0];
-      
-      // Check password
-      const isPasswordValid = await bcrypt.compare(password, user.password);
-      
-      if (!isPasswordValid) {
-        return res.status(400).json({ 
-          success: false, 
-          message: 'Invalid password' 
-        });
-      }
-
-      // Login successful
-      res.json({ 
-        success: true, 
-        message: 'Login successful',
-        user: { 
-          id: user.id, 
-          email: user.email,
-          created_at: user.created_at
-        }
-      });
-    });
-
-  } catch (error) {
-    console.error('Login error: ', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Internal server error' 
-    });
-  }
-});
-
-
-
-// Temporary in-memory (palitan mo ng DB kagaya ng MongoDB/MySQL)
-let sales = [];
-
-router.post("/", (req, res) => {
-  const { items, total, paid, change, cashier } = req.body;
-  const sale = {
-    id: sales.length + 1,
-    date: new Date().toISOString(),
-    items,
-    total,
-    paid,
-    change,
-    cashier,
-  };
-  sales.push(sale);
-  res.status(201).json(sale);
-});
-
-router.get("/", (req, res) => {
-  res.json(sales);
-});
-
-app.use(cors());
-app.use(express.json());
-
-app.use("/api/sales", salesRoutes);
-
-app.listen(5000, () => console.log("Server running on port 5000"));
-
-module.exports = router;
+app.listen(PORT, () =>
+  console.log(`Server running on http://localhost:${PORT}`)
+);

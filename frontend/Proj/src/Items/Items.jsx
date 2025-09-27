@@ -1,31 +1,8 @@
-// src/components/Items.jsx
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
+import axios from "axios";
 
 const Items = () => {
-  const [items, setItems] = useState([
-    {
-      id: 1,
-      name: "Tomato",
-      category: "Food",
-      price: 20,
-      image: "https://via.placeholder.com/100",
-    },
-    {
-      id: 2,
-      name: "Mango",
-      category: "Drinks",
-      price: 50,
-      image: "https://via.placeholder.com/100",
-    },
-    {
-      id: 3,
-      name: "Rice",
-      category: "Sides",
-      price: 40,
-      image: "https://via.placeholder.com/100",
-    },
-  ]);
-
+  const [items, setItems] = useState([]);
   const [showFormModal, setShowFormModal] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
   const [newItem, setNewItem] = useState({
@@ -36,57 +13,67 @@ const Items = () => {
   });
   const [viewItem, setViewItem] = useState(null);
 
+  const API = "http://localhost:3002/items";
+
+  // Fetch items from backend
+  const fetchItems = async () => {
+    try {
+      const res = await axios.get(API);
+      setItems(res.data);
+    } catch (err) {
+      console.error("Error fetching items: ", err);
+    }
+  };
+
+  useEffect(() => {
+    fetchItems();
+  }, []);
+
   // Save handler (Add or Edit)
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!newItem.name || !newItem.price || !newItem.image) {
       alert("Please fill in all fields!");
       return;
     }
 
-    if (editingItem) {
-      // Update item
-      setItems(
-        items.map((item) =>
-          item.id === editingItem.id
-            ? { ...editingItem, ...newItem, price: parseFloat(newItem.price) }
-            : item
-        )
-      );
-    } else {
-      // Add item
-      const id = items.length > 0 ? items[items.length - 1].id + 1 : 1;
-      setItems([
-        ...items,
-        { id, ...newItem, price: parseFloat(newItem.price) },
-      ]);
+    try {
+      if (editingItem) {
+        await axios.put(`${API}/${editingItem.id}`, {
+          ...newItem,
+          price: parseFloat(newItem.price),
+        });
+      } else {
+        await axios.post(API, { ...newItem, price: parseFloat(newItem.price) });
+      }
+      fetchItems();
+      setShowFormModal(false);
+      setEditingItem(null);
+      setNewItem({ name: "", category: "Food", price: "", image: "" });
+    } catch (err) {
+      console.error("Error saving item: ", err);
     }
-
-    setNewItem({ name: "", category: "Food", price: "", image: "" });
-    setEditingItem(null);
-    setShowFormModal(false);
   };
 
-  // Edit handler
+  // Delete
+  const handleDelete = async (id) => {
+    if (!window.confirm("Are you sure you want to delete this item?")) return;
+    try {
+      await axios.delete(`${API}/${id}`);
+      fetchItems();
+    } catch (err) {
+      console.error("Error deleting item: ", err);
+    }
+  };
+
+  // Edit
   const handleEdit = (item) => {
     setEditingItem(item);
-    setNewItem({
-      name: item.name,
-      category: item.category,
-      price: item.price,
-      image: item.image,
-    });
+    setNewItem({ ...item });
     setShowFormModal(true);
   };
 
-  // Delete handler
-  const handleDelete = (id) => {
-    if (window.confirm("Are you sure you want to delete this item?")) {
-      setItems(items.filter((item) => item.id !== id));
-    }
-  };
-
   return (
-    <div className="p-6 bg-gray-100 min-h-screen">
+     <div className="p-6 bg-gray-100 min-h-screen">
       <div className="max-w-6xl mx-auto bg-white p-6 rounded-lg shadow">
         <div className="flex justify-between items-center mb-4">
           <h1 className="text-2xl font-bold">Items</h1>
@@ -160,7 +147,7 @@ const Items = () => {
 
         {/* Add/Edit Item Modal */}
         {showFormModal && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center">
+          <div className="fixed inset-0  flex items-center justify-center">
             <div className="bg-white p-6 rounded-lg shadow-lg max-w-lg w-full">
               <h2 className="text-xl font-bold mb-4">
                 {editingItem ? "Edit Item" : "Add New Item"}
@@ -229,7 +216,7 @@ const Items = () => {
 
         {/* View Modal */}
         {viewItem && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center">
+          <div className="fixed inset-0 flex items-center justify-center">
             <div className="bg-white p-6 rounded-lg shadow-lg max-w-md w-full">
               <h2 className="text-xl font-bold mb-4">Item Details</h2>
               <img

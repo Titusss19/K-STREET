@@ -1,4 +1,5 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
+import axios from "axios";
 
 const FoodHubPOS = () => {
   const [orderType, setOrderType] = useState("Dine In");
@@ -6,25 +7,33 @@ const FoodHubPOS = () => {
   const [paymentAmount, setPaymentAmount] = useState("");
   const [activeCategory, setActiveCategory] = useState("All");
   const [searchTerm, setSearchTerm] = useState("");
+  const [discountApplied, setDiscountApplied] = useState(false); // ✅ Discount flag
 
-  // 🆕 Dagdag na states para sa modal
+  const [products, setProducts] = useState([]); // Fetched from DB
+  const [categories, setCategories] = useState([]);
+
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [paymentResult, setPaymentResult] = useState(null);
   const [changeAmount, setChangeAmount] = useState(0);
 
-  // Sample product data (mula sa database sa production)
-  const products = [
-    { id: 1, name: "Classic Burger", price: 100, category: "Food" },
-    { id: 2, name: "Pepperoni Pizza", price: 150, category: "Food" },
-    { id: 3, name: "Spaghetti Carbonara", price: 120, category: "Food" },
-    { id: 4, name: "Caesar Salad", price: 80, category: "Food" },
-    { id: 5, name: "Coca Cola", price: 30, category: "Drinks" },
-    { id: 6, name: "Iced Coffee", price: 40, category: "Drinks" },
-    { id: 7, name: "Chocolate Cake", price: 60, category: "Desserts" },
-    { id: 8, name: "French Fries", price: 50, category: "Sides" },
-  ];
+  const [showReceiptModal, setShowReceiptModal] = useState(false);
+  const [receiptContent, setReceiptContent] = useState("");
 
-  // Filter products base sa category at search term
+  // Fetch products from backend
+  useEffect(() => {
+    const fetchProducts = async () => {
+      try {
+        const res = await axios.get("http://localhost:3002/items");
+        setProducts(res.data);
+        setCategories(["All", ...new Set(res.data.map((p) => p.category))]);
+      } catch (err) {
+        console.error("Failed to fetch products:", err);
+      }
+    };
+    fetchProducts();
+  }, []);
+
+  // Filter products
   const filteredProducts = products.filter((product) => {
     const matchesCategory =
       activeCategory === "All" || product.category === activeCategory;
@@ -34,15 +43,9 @@ const FoodHubPOS = () => {
     return matchesCategory && matchesSearch;
   });
 
-  // Kunin ang mga categories
-  const categories = [
-    "All",
-    ...new Set(products.map((product) => product.category)),
-  ];
-
+  // --- Cart functions ---
   const addToCart = (product) => {
     const existingItem = cart.find((item) => item.id === product.id);
-
     if (existingItem) {
       setCart(
         cart.map((item) =>
@@ -65,7 +68,6 @@ const FoodHubPOS = () => {
       removeFromCart(productId);
       return;
     }
-
     setCart(
       cart.map((item) =>
         item.id === productId ? { ...item, quantity: newQuantity } : item
@@ -76,26 +78,30 @@ const FoodHubPOS = () => {
   const clearCart = () => {
     setCart([]);
     setPaymentAmount("");
+    setDiscountApplied(false);
   };
 
-  const calculateSubtotal = () => {
-    return cart.reduce((total, item) => total + item.price * item.quantity, 0);
-  };
+  // --- Totals ---
+  const calculateSubtotal = () =>
+    cart.reduce((total, item) => total + item.price * item.quantity, 0);
 
   const calculateTotal = () => {
     const subtotal = calculateSubtotal();
-    const additionalFee = subtotal > 0 ? 0 : 0;
-    const Tax = subtotal > 0 ? subtotal * 0.12 : 0; // Fixed 12%
-    const discount = subtotal >= 0 ? 0 : 0;
-    return subtotal + additionalFee + Tax - discount;
+    const Tax = subtotal * 0.12;
+    let total = subtotal + Tax;
+    if (discountApplied) total *= 0.8; // Apply 20% discount
+    return total;
   };
 
-  // 🆕 Bagong handlePayment function na may modal
+  const subtotal = calculateSubtotal();
+  const Tax = subtotal * 0.12;
+  const total = calculateTotal();
+  const taxPercentage = subtotal > 0 ? (Tax / subtotal) * 100 : 0;
+
+  // --- Payment ---
   const handlePayment = () => {
-    const total = calculateTotal();
     const amount = parseFloat(paymentAmount);
 
-    // Validation
     if (!paymentAmount || amount <= 0) {
       setPaymentResult({
         type: "error",
@@ -125,42 +131,36 @@ const FoodHubPOS = () => {
       });
     }
 
-    // Ipakita ang modal
     setShowPaymentModal(true);
   };
 
-  // 🆕 State para sa receipt modal
-  const [showReceiptModal, setShowReceiptModal] = useState(false);
-  const [receiptContent, setReceiptContent] = useState("");
-
-  // 🆕 Function para sa receipt printing (open modal instead of alert)
+  // --- Receipt ---
   const handlePrintReceipt = () => {
     const receipt = `
-    FOOD HUB RECEIPT
-    ====================
-    Order Type: ${orderType}
-    Date: ${new Date().toLocaleString()}
-    
-    Items:
-    ${cart
-      .map(
-        (item) => `
-      ${item.name} x${item.quantity} - P${(item.price * item.quantity).toFixed(
-          2
-        )}
-    `
-      )
-      .join("")}
-    
-    Subtotal: P${calculateSubtotal().toFixed(2)}
-    Tax: P${Tax.toFixed(2)}
-    Discount: -P${discount.toFixed(2)}
-    Total: P${calculateTotal().toFixed(2)}
-    Amount Paid: P${parseFloat(paymentAmount).toFixed(2)}
-    Change: P${changeAmount.toFixed(2)}
-    
-    Thank you for your order!
-  `;
+FOOD HUB RECEIPT
+====================
+Order Type: ${orderType}
+Date: ${new Date().toLocaleString()}
+
+Items:
+${cart
+  .map(
+    (item) =>
+      `${item.name} x${item.quantity} - P${(item.price * item.quantity).toFixed(
+        2
+      )}`
+  )
+  .join("\n")}
+
+Subtotal: P${subtotal.toFixed(2)}
+Tax: P${Tax.toFixed(2)}
+${discountApplied ? "Discount (20%): Applied\n" : ""}
+Total: P${total.toFixed(2)}
+Amount Paid: P${parseFloat(paymentAmount).toFixed(2)}
+Change: P${changeAmount.toFixed(2)}
+
+Thank you for your order!
+`;
 
     setReceiptContent(receipt);
     setShowReceiptModal(true);
@@ -168,12 +168,10 @@ const FoodHubPOS = () => {
     clearCart();
   };
 
-  const subtotal = calculateSubtotal();
-  const additionalFee = subtotal > 0 ? 0 : 0;
-  const Tax = subtotal > 0 ? subtotal * 0.12 : 0;
-  const discount = subtotal >= 0 ? 0 : 0;
-  const total = calculateTotal();
-  const taxPercentage = subtotal > 0 ? (Tax / subtotal) * 100 : 0;
+  // --- Apply Discount ---
+  const applyDiscount = () => {
+    if (!discountApplied) setDiscountApplied(true);
+  };
 
   return (
     <div className="min-h-screen bg-gray-100 p-4">
@@ -265,10 +263,19 @@ const FoodHubPOS = () => {
                   key={product.id}
                   className="border border-gray-200 rounded-xl p-4 hover:shadow-lg transition-shadow duration-300"
                 >
-                  <div className="h-40 bg-gradient-to-br from-gray-100 to-gray-200 rounded-lg mb-3 flex items-center justify-center">
-                    <span className="text-gray-500 font-medium">
-                      Product Image
-                    </span>
+                  {/* Product Image */}
+                  <div className="h-40 rounded-lg mb-3 overflow-hidden flex items-center justify-center bg-gray-100">
+                    {product.image ? (
+                      <img
+                        src={product.image}
+                        alt={product.name}
+                        className="object-cover h-full w-full"
+                      />
+                    ) : (
+                      <span className="text-gray-500 font-medium">
+                        No Image
+                      </span>
+                    )}
                   </div>
                   <h3 className="font-semibold text-lg text-gray-800 mb-1">
                     {product.name}
@@ -278,7 +285,8 @@ const FoodHubPOS = () => {
                   </p>
                   <div className="flex justify-between items-center">
                     <span className="text-green-600 font-bold text-xl">
-                      P{product.price}
+                      P{(product.price * 1.12).toFixed(2)}{" "}
+                      {/* Price + 12% tax */}
                     </span>
                     <button
                       className="bg-green-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-green-700 transition-colors focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2"
@@ -303,6 +311,21 @@ const FoodHubPOS = () => {
                 onClick={clearCart}
               >
                 Clear All
+              </button>
+            </div>
+
+            {/* Discount Button */}
+            <div className="mb-4">
+              <button
+                className={`w-full py-3 rounded-lg font-medium text-white ${
+                  discountApplied
+                    ? "bg-gray-400 cursor-not-allowed"
+                    : "bg-purple-600 hover:bg-purple-700"
+                }`}
+                onClick={applyDiscount}
+                disabled={discountApplied}
+              >
+                Apply PWD/Senior Discount 20%
               </button>
             </div>
 
@@ -373,21 +396,15 @@ const FoodHubPOS = () => {
                   <span className="font-medium">P{subtotal.toFixed(2)}</span>
                 </div>
                 <div className="flex justify-between text-gray-700">
-                  <span>Additional Fee</span>
-                  <span className="font-medium">
-                    P{additionalFee.toFixed(2)}
-                  </span>
-                </div>
-                <div className="flex justify-between text-gray-700">
                   <span>Tax({taxPercentage.toFixed(1)}%)</span>
                   <span className="font-medium">P{Tax.toFixed(2)}</span>
                 </div>
-                <div className="flex justify-between text-gray-700">
-                  <span>Discounts</span>
-                  <span className="text-red-600 font-medium">
-                    -P{discount.toFixed(2)}
-                  </span>
-                </div>
+                {discountApplied && (
+                  <div className="flex justify-between text-gray-700 font-semibold">
+                    <span>Discount (20%)</span>
+                    <span>P{((subtotal + Tax) * 0.2).toFixed(2)}</span>
+                  </div>
+                )}
                 <div className="flex justify-between font-bold text-lg border-t border-gray-200 pt-3 text-gray-900">
                   <span>Total</span>
                   <span>P{total.toFixed(2)}</span>
@@ -443,11 +460,10 @@ const FoodHubPOS = () => {
         </div>
       </div>
 
-      {/* 🆕 Receipt Modal */}
+      {/* --- Receipt Modal --- */}
       {showReceiptModal && (
         <div className="fixed inset-0 flex items-center justify-center z-50">
           <div className="bg-white rounded-2xl shadow-xl max-w-md w-full mx-4 items-center justify-center">
-            {/* Header */}
             <div className="p-4 bg-green-600 text-white rounded-t-2xl flex justify-between items-center">
               <h3 className="text-xl font-bold">Receipt</h3>
               <button
@@ -457,18 +473,14 @@ const FoodHubPOS = () => {
                 ×
               </button>
             </div>
-
-            {/* Body */}
             <div className="p-6 max-h-96 overflow-y-auto">
               <pre className="whitespace-pre-wrap font-mono text-sm text-gray-800">
                 {receiptContent}
               </pre>
             </div>
-
-            {/* Footer */}
             <div className="p-4 flex space-x-3">
               <button
-                onClick={() => window.print()} // actual print
+                onClick={() => window.print()}
                 className="flex-1 bg-green-600 text-white py-2 rounded-lg font-medium hover:bg-green-700"
               >
                 Print
@@ -484,11 +496,10 @@ const FoodHubPOS = () => {
         </div>
       )}
 
-      {/* 🆕 Payment Modal */}
+      {/* --- Payment Modal --- */}
       {showPaymentModal && (
         <div className="fixed inset-0 flex items-center justify-center z-50">
           <div className="bg-white rounded-2xl shadow-xl max-w-md w-full mx-4">
-            {/* Modal Header */}
             <div
               className={`p-6 rounded-t-2xl ${
                 paymentResult.type === "success" ? "bg-green-500" : "bg-red-500"
@@ -512,7 +523,6 @@ const FoodHubPOS = () => {
               </div>
             </div>
 
-            {/* Modal Body */}
             <div className="p-6">
               <div className="text-center mb-6">
                 <div
@@ -591,3 +601,4 @@ const FoodHubPOS = () => {
 };
 
 export default FoodHubPOS;
+
