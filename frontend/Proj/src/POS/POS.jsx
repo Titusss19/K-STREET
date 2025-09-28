@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import axios from "axios";
 import html2canvas from "html2canvas";
 
@@ -9,19 +9,30 @@ const FoodHubPOS = () => {
   const [activeCategory, setActiveCategory] = useState("All");
   const [searchTerm, setSearchTerm] = useState("");
   const [discountApplied, setDiscountApplied] = useState(false);
+
   const [products, setProducts] = useState([]);
   const [categories, setCategories] = useState([]);
+
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [paymentResult, setPaymentResult] = useState(null);
   const [changeAmount, setChangeAmount] = useState(0);
+
+  const [showReceiptModal, setShowReceiptModal] = useState(false);
   const [receiptContent, setReceiptContent] = useState("");
+
+  const receiptRef = useRef();
 
   // Fetch products from backend
   useEffect(() => {
     const fetchProducts = async () => {
       try {
         const res = await axios.get("http://localhost:3002/items");
-        setProducts(res.data);
+        // Ensure price is number
+        const productsWithNumberPrice = res.data.map((product) => ({
+          ...product,
+          price: Number(product.price) || 0,
+        }));
+        setProducts(productsWithNumberPrice);
         setCategories(["All", ...new Set(res.data.map((p) => p.category))]);
       } catch (err) {
         console.error("Failed to fetch products:", err);
@@ -52,7 +63,15 @@ const FoodHubPOS = () => {
         )
       );
     } else {
-      setCart([...cart, { ...product, quantity: 1 }]);
+      // Ensure price is number when adding to cart
+      setCart([
+        ...cart,
+        {
+          ...product,
+          quantity: 1,
+          price: Number(product.price) || 0,
+        },
+      ]);
     }
   };
 
@@ -80,25 +99,29 @@ const FoodHubPOS = () => {
 
   // --- Totals ---
   const calculateSubtotal = () =>
-    cart.reduce((total, item) => total + item.price * item.quantity, 0);
+    cart.reduce(
+      (total, item) => total + (Number(item.price) || 0) * item.quantity,
+      0
+    );
 
   const calculateTotal = () => {
     const subtotal = calculateSubtotal();
-    const Tax = subtotal * 0.12;
-    let total = subtotal + Tax;
-    if (discountApplied) total *= 0.8;
+    const tax = subtotal * 0.12;
+    let total = subtotal + tax;
+    if (discountApplied) total *= 0.8; // Apply 20% discount
     return total;
   };
 
   const subtotal = calculateSubtotal();
-  const Tax = subtotal * 0.12;
+  const tax = subtotal * 0.12;
   const total = calculateTotal();
-  const taxPercentage = subtotal > 0 ? (Tax / subtotal) * 100 : 0;
+  const taxPercentage = subtotal > 0 ? (tax / subtotal) * 100 : 0;
 
   // --- Payment ---
   const handlePayment = async () => {
     const amount = parseFloat(paymentAmount);
-    if (!paymentAmount || amount <= 0) {
+
+    if (!paymentAmount || amount <= 0 || isNaN(amount)) {
       setPaymentResult({
         type: "error",
         title: "Invalid Amount",
@@ -113,7 +136,7 @@ const FoodHubPOS = () => {
       setPaymentResult({
         type: "error",
         title: "Insufficient Amount",
-        message: "The amount entered is less than the total.",
+        message: `The amount entered is less than the total.`,
         required: total,
       });
       setShowPaymentModal(true);
@@ -123,33 +146,38 @@ const FoodHubPOS = () => {
     const change = amount - total;
     setChangeAmount(change);
 
-    // Generate receipt string
-    const receipt = `FOOD HUB RECEIPT
-====================
+    // Generate receipt string - CENTERED FORMAT
+    const receipt = `
+FOOD HUB RECEIPT
+=============================
 Order Type: ${orderType}
 Date: ${new Date().toLocaleString()}
+
 Items:
 ${cart
   .map(
     (item) =>
-      `${item.name} x${item.quantity} - P${(item.price * item.quantity).toFixed(
-        2
-      )}`
+      `${item.name} x${item.quantity} - P${(
+        (Number(item.price) || 0) * item.quantity
+      ).toFixed(2)}`
   )
   .join("\n")}
+
 Subtotal: P${subtotal.toFixed(2)}
-Tax: P${Tax.toFixed(2)}
+Tax: P${tax.toFixed(2)}
 ${discountApplied ? "Discount (20%): Applied\n" : ""}
 Total: P${total.toFixed(2)}
 Amount Paid: P${amount.toFixed(2)}
 Change: P${change.toFixed(2)}
 
-Thank you for your order!`;
+Thank you for your order!
+`;
 
     setReceiptContent(receipt);
 
     const user = JSON.parse(localStorage.getItem("user"));
     const userId = user?.id;
+
     if (!userId) {
       setPaymentResult({
         type: "error",
@@ -160,10 +188,11 @@ Thank you for your order!`;
       return;
     }
 
+    // Send order to backend with correct field names
     try {
       const res = await axios.post("http://localhost:3002/orders", {
         userId,
-        cart,
+        paidAmount: amount, // Changed from paymentAmount to paidAmount
         total,
         discountApplied,
         changeAmount: change,
@@ -178,6 +207,7 @@ Thank you for your order!`;
         message: `Payment of P${amount.toFixed(2)} received.`,
         change: change,
       });
+
       setShowPaymentModal(true);
       clearCart();
     } catch (err) {
@@ -198,69 +228,289 @@ Thank you for your order!`;
 
   // --- Print Receipt ---
   const handlePrintReceipt = () => {
-    const printWindow = window.open("", "PRINT", "height=700,width=700");
+    // Recalculate values to ensure accuracy
+    const currentSubtotal = calculateSubtotal();
+    const currentTax = currentSubtotal * 0.12;
+    const currentTotal = calculateTotal();
+    const currentAmountPaid = parseFloat(paymentAmount) || 0;
+    const currentChange = changeAmount;
+
+    const printWindow = window.open("", "PRINT", "height=600,width=400");
+
     printWindow.document.write(`
-      <html>
-      <head>
-        <title>Receipt</title>
-        <style>
-          body { font-family: 'Courier New', monospace; margin:0; padding:10px; display:flex; flex-direction:column; align-items:center; justify-content:center; min-height:100vh; font-size:12px; background:white; }
-          .receipt-container { text-align:center; width:250px; max-width:100%; }
-          .receipt-header { font-weight:bold; font-size:14px; margin-bottom:10px; border-bottom:1px dashed #000; padding-bottom:5px; width:100%; }
-          .receipt-content { text-align:center; width:100%; line-height:1.3; }
-          .receipt-line { width:100%; margin:2px 0; }
-          .divider { border-top:1px dashed #000; margin:8px 0; width:100%; }
-          @media print { body { padding:5px; } .receipt-container { width:240px !important; } }
-        </style>
-      </head>
-      <body>
-        <div class="receipt-container">
-          <div class="receipt-header">FOOD HUB RECEIPT</div>
-          <div class="receipt-content">
-            <pre class="whitespace-pre-wrap">${receiptContent}</pre>
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>Receipt</title>
+      <style>
+        body {
+          font-family: 'Courier New', monospace;
+          margin: 0;
+          padding: 20px;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          min-height: 100vh;
+          font-size: 14px;
+          background: white;
+          line-height: 1.4;
+        }
+        .receipt-container {
+          text-align: center;
+          width: 280px;
+          max-width: 100%;
+        }
+        .receipt-header {
+          font-weight: bold;
+          font-size: 18px;
+          margin-bottom: 10px;
+          border-bottom: 2px dashed #000;
+          padding-bottom: 8px;
+          width: 100%;
+        }
+        .receipt-content {
+          text-align: center;
+          width: 100%;
+        }
+        .receipt-line {
+          width: 100%;
+          margin: 4px 0;
+          text-align: center;
+        }
+        .items-section {
+          text-align: left;
+          margin: 10px 0;
+          width: 100%;
+        }
+        .item-line {
+          display: flex;
+          justify-content: space-between;
+          margin: 3px 0;
+          font-size: 13px;
+        }
+        .divider {
+          border-top: 1px dashed #000;
+          margin: 10px 0;
+          width: 100%;
+        }
+        .summary-line {
+          display: flex;
+          justify-content: space-between;
+          margin: 4px 0;
+          font-size: 13px;
+        }
+        .total-line {
+          display: flex;
+          justify-content: space-between;
+          margin: 8px 0;
+          font-weight: bold;
+          font-size: 15px;
+          border-top: 1px dashed #000;
+          padding-top: 8px;
+        }
+        @media print {
+          body {
+            padding: 15px;
+          }
+          .receipt-container {
+            width: 270px !important;
+          }
+        }
+      </style>
+    </head>
+    <body>
+      <div class="receipt-container">
+        <div class="receipt-header">FOOD HUB RECEIPT</div>
+        <div class="receipt-content">
+          <div class="receipt-line">Order Type: ${orderType}</div>
+          <div class="receipt-line">Date: ${new Date().toLocaleString()}</div>
+          <div class="divider"></div>
+          <div class="receipt-line" style="font-weight: bold; text-align: left;">ITEMS:</div>
+          <div class="items-section">
+            ${
+              cart.length > 0
+                ? cart
+                    .map(
+                      (item) => `
+                  <div class="item-line">
+                    <span>${item.name} x${item.quantity}</span>
+                    <span>P${(
+                      (Number(item.price) || 0) * item.quantity
+                    ).toFixed(2)}</span>
+                  </div>
+                `
+                    )
+                    .join("")
+                : '<div class="receipt-line">No items</div>'
+            }
+          </div>
+          <div class="divider"></div>
+          <div class="summary-line">
+            <span>Subtotal:</span>
+            <span>P${currentSubtotal.toFixed(2)}</span>
+          </div>
+          <div class="summary-line">
+            <span>Tax:</span>
+            <span>P${currentTax.toFixed(2)}</span>
+          </div>
+          ${
+            discountApplied
+              ? `
+          <div class="summary-line">
+            <span>Discount (20%):</span>
+            <span>Applied</span>
+          </div>
+          `
+              : ""
+          }
+          <div class="total-line">
+            <span>Total:</span>
+            <span>P${currentTotal.toFixed(2)}</span>
+          </div>
+          <div class="summary-line">
+            <span>Amount Paid:</span>
+            <span>P${currentAmountPaid.toFixed(2)}</span>
+          </div>
+          <div class="summary-line">
+            <span>Change:</span>
+            <span>P${currentChange.toFixed(2)}</span>
+          </div>
+          <div class="divider"></div>
+          <div class="receipt-line" style="font-weight: bold; margin-top: 15px;">
+            Thank you for your order!
           </div>
         </div>
-      </body>
-      </html>
-    `);
+      </div>
+    </body>
+    </html>
+  `);
+
     printWindow.document.close();
     printWindow.focus();
+
     setTimeout(() => {
       printWindow.print();
       printWindow.close();
-    }, 250);
+    }, 500);
   };
 
-  // --- Save Receipt as PNG ---
-const handleSaveReceiptAsImage = () => {
-  const user = JSON.parse(localStorage.getItem("user"));
-  const cashierId = user?.id ?? "Unknown";
+  // --- Save Receipt as PNG (CENTERED) ---
+  const handleSaveReceiptAsImage = () => {
+    // Recalculate values to ensure accuracy
+    const currentSubtotal = calculateSubtotal();
+    const currentTax = currentSubtotal * 0.12;
+    const currentTotal = calculateTotal();
+    const currentAmountPaid = parseFloat(paymentAmount) || 0;
+    const currentChange = changeAmount;
 
-  // Add Cashier ID at the top without duplicating header
-  const receiptWithCashier = receiptContent.replace(
-    "FOOD HUB RECEIPT",
-    `FOOD HUB RECEIPT\nCashier ID: ${cashierId}`
-  );
+    const receiptElement = document.createElement("div");
+    receiptElement.style.position = "fixed";
+    receiptElement.style.top = "0";
+    receiptElement.style.left = "0";
+    receiptElement.style.width = "300px";
+    receiptElement.style.padding = "25px 20px";
+    receiptElement.style.background = "white";
+    receiptElement.style.fontFamily = "'Courier New', monospace";
+    receiptElement.style.fontSize = "14px";
+    receiptElement.style.lineHeight = "1.4";
+    receiptElement.style.textAlign = "center";
+    receiptElement.style.border = "2px solid #000";
+    receiptElement.style.zIndex = "9999";
+    receiptElement.style.display = "flex";
+    receiptElement.style.flexDirection = "column";
+    receiptElement.style.alignItems = "center";
+    receiptElement.style.justifyContent = "center";
+    receiptElement.style.minHeight = "450px";
+    receiptElement.style.color = "black";
 
-  const tempDiv = document.createElement("div");
-  tempDiv.style.position = "absolute";
-  tempDiv.style.left = "-9999px";
-  tempDiv.style.padding = "20px";
-  tempDiv.style.background = "#fff";
-  tempDiv.style.fontFamily = "'Courier New', monospace";
-  tempDiv.style.whiteSpace = "pre-wrap";
-  tempDiv.innerText = receiptWithCashier;
-  document.body.appendChild(tempDiv);
+    receiptElement.innerHTML = `
+    <div style="text-align: center; width: 100%;">
+      <div style="font-weight: bold; font-size: 18px; margin-bottom: 12px; border-bottom: 2px dashed #000; padding-bottom: 8px;">
+        FOOD HUB RECEIPT
+      </div>
+      <div style="text-align: center; width: 100%;">
+        <div style="margin-bottom: 3px;">Order Type: ${orderType}</div>
+        <div style="margin-bottom: 15px;">Date: ${new Date().toLocaleString()}</div>
+        <div style="border-top: 1px dashed #000; margin: 12px 0; width: 100%;"></div>
+        <div style="font-weight: bold; text-align: left; margin-bottom: 8px;">ITEMS:</div>
+        <div style="text-align: left; width: 100%; margin-bottom: 15px;">
+          ${
+            cart.length > 0
+              ? cart
+                  .map(
+                    (item) => `
+                <div style="display: flex; justify-content: space-between; margin: 4px 0;">
+                  <span>${item.name} x${item.quantity}</span>
+                  <span>P${((Number(item.price) || 0) * item.quantity).toFixed(
+                    2
+                  )}</span>
+                </div>
+              `
+                  )
+                  .join("")
+              : '<div style="text-align: center;">No items</div>'
+          }
+        </div>
+        <div style="border-top: 1px dashed #000; margin: 12px 0; width: 100%;"></div>
+        <div style="display: flex; justify-content: space-between; margin: 5px 0;">
+          <span>Subtotal:</span>
+          <span>P${currentSubtotal.toFixed(2)}</span>
+        </div>
+        <div style="display: flex; justify-content: space-between; margin: 5px 0;">
+          <span>Tax:</span>
+          <span>P${currentTax.toFixed(2)}</span>
+        </div>
+        ${
+          discountApplied
+            ? `
+        <div style="display: flex; justify-content: space-between; margin: 5px 0;">
+          <span>Discount (20%):</span>
+          <span>Applied</span>
+        </div>
+        `
+            : ""
+        }
+        <div style="display: flex; justify-content: space-between; margin: 8px 0; font-weight: bold; font-size: 16px; border-top: 1px dashed #000; padding-top: 8px;">
+          <span>Total:</span>
+          <span>P${currentTotal.toFixed(2)}</span>
+        </div>
+        <div style="display: flex; justify-content: space-between; margin: 5px 0;">
+          <span>Amount Paid:</span>
+          <span>P${currentAmountPaid.toFixed(2)}</span>
+        </div>
+        <div style="display: flex; justify-content: space-between; margin: 5px 0;">
+          <span>Change:</span>
+          <span>P${currentChange.toFixed(2)}</span>
+        </div>
+        <div style="border-top: 1px dashed #000; margin: 15px 0; width: 100%;"></div>
+        <div style="font-weight: bold; margin-top: 10px;">
+          Thank you for your order!
+        </div>
+      </div>
+    </div>
+  `;
 
-  html2canvas(tempDiv).then((canvas) => {
-    const link = document.createElement("a");
-    link.download = `receipt_${Date.now()}.png`;
-    link.href = canvas.toDataURL();
-    link.click();
-    document.body.removeChild(tempDiv);
-  });
-};
+    document.body.appendChild(receiptElement);
 
+    // Calculate dynamic height based on content
+    const dynamicHeight = Math.max(450, receiptElement.scrollHeight);
+
+    html2canvas(receiptElement, {
+      width: 300,
+      height: dynamicHeight,
+      scale: 2,
+      logging: false,
+      useCORS: true,
+      backgroundColor: "#ffffff",
+    }).then((canvas) => {
+      const link = document.createElement("a");
+      link.download = `receipt_${Date.now()}.png`;
+      link.href = canvas.toDataURL("image/png");
+      link.click();
+      document.body.removeChild(receiptElement);
+    });
+  };
 
   return (
     <div className="min-h-screen bg-gray-100 p-4">
@@ -310,13 +560,13 @@ const handleSaveReceiptAsImage = () => {
           </div>
         </div>
 
-        {/* Body */}
         <div className="flex flex-col lg:flex-row">
           {/* Product List Section */}
           <div className="lg:w-2/3 p-6 border-r border-gray-200">
             <h2 className="text-2xl font-bold text-gray-800 mb-4">
               Product List
             </h2>
+
             {/* Search and Category Filter */}
             <div className="flex flex-col md:flex-row gap-4 mb-6">
               <div className="flex-1">
@@ -344,6 +594,7 @@ const handleSaveReceiptAsImage = () => {
                 ))}
               </div>
             </div>
+
             {/* Product Grid */}
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-6">
               {filteredProducts.map((product) => (
@@ -351,6 +602,7 @@ const handleSaveReceiptAsImage = () => {
                   key={product.id}
                   className="border border-gray-200 rounded-xl p-4 hover:shadow-lg transition-shadow duration-300"
                 >
+                  {/* Product Image */}
                   <div className="h-40 rounded-lg mb-3 overflow-hidden flex items-center justify-center bg-gray-100">
                     {product.image ? (
                       <img
@@ -372,7 +624,7 @@ const handleSaveReceiptAsImage = () => {
                   </p>
                   <div className="flex justify-between items-center">
                     <span className="text-green-600 font-bold text-xl">
-                      P{(product.price * 1.12).toFixed(2)}
+                      P{((Number(product.price) || 0) * 1.12).toFixed(2)}
                     </span>
                     <button
                       className="bg-green-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-green-700 transition-colors focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2"
@@ -435,10 +687,14 @@ const handleSaveReceiptAsImage = () => {
                           {item.name}
                         </p>
                         <p className="text-sm text-gray-600">
-                          P{item.price} × {item.quantity}
+                          P{(Number(item.price) || 0).toFixed(2)} ×{" "}
+                          {item.quantity}
                         </p>
                         <p className="text-green-600 font-semibold">
-                          P{(item.price * item.quantity).toFixed(2)}
+                          P
+                          {((Number(item.price) || 0) * item.quantity).toFixed(
+                            2
+                          )}
                         </p>
                       </div>
                       <div className="flex items-center space-x-3">
@@ -483,12 +739,12 @@ const handleSaveReceiptAsImage = () => {
                 </div>
                 <div className="flex justify-between text-gray-700">
                   <span>Tax({taxPercentage.toFixed(1)}%)</span>
-                  <span className="font-medium">P{Tax.toFixed(2)}</span>
+                  <span className="font-medium">P{tax.toFixed(2)}</span>
                 </div>
                 {discountApplied && (
                   <div className="flex justify-between text-gray-700 font-semibold">
                     <span>Discount (20%)</span>
-                    <span>P{((subtotal + Tax) * 0.2).toFixed(2)}</span>
+                    <span>P{((subtotal + tax) * 0.2).toFixed(2)}</span>
                   </div>
                 )}
                 <div className="flex justify-between font-bold text-lg border-t border-gray-200 pt-3 text-gray-900">
@@ -519,6 +775,7 @@ const handleSaveReceiptAsImage = () => {
                     P1000
                   </button>
                 </div>
+
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     Enter amount
@@ -531,8 +788,9 @@ const handleSaveReceiptAsImage = () => {
                     placeholder="0.00"
                   />
                 </div>
+
                 <button
-                  className="w-full bg-green-600 text-white py-4 rounded-lg font-semibold text-lg hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2"
+                  className="w-full bg-green-600 text-white py-4 rounded-lg font-semibold text-lg hover:bg-green-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2"
                   onClick={handlePayment}
                   disabled={cart.length === 0}
                 >
@@ -543,8 +801,58 @@ const handleSaveReceiptAsImage = () => {
           </div>
         </div>
       </div>
+
+      {/* --- Receipt Modal --- */}
+      {showReceiptModal && (
+        <div className="fixed inset-0 flex items-center justify-center z-50">
+          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full mx-4">
+            <div className="p-4 bg-green-600 text-white rounded-t-2xl flex justify-between items-center">
+              <h3 className="text-xl font-bold">Receipt</h3>
+              <button
+                onClick={() => setShowReceiptModal(false)}
+                className="text-white hover:text-gray-200 text-2xl"
+              >
+                ×
+              </button>
+            </div>
+            <div className="p-6 max-h-96 overflow-y-auto">
+              <pre
+                ref={receiptRef}
+                className="whitespace-pre-wrap font-mono text-sm text-gray-800 text-center"
+                style={{
+                  fontFamily: "'Courier New', monospace",
+                  textAlign: "center",
+                }}
+              >
+                {receiptContent}
+              </pre>
+            </div>
+            <div className="p-4 flex space-x-3">
+              <button
+                onClick={handlePrintReceipt}
+                className="flex-1 bg-green-600 text-white py-2 rounded-lg font-medium hover:bg-green-700"
+              >
+                Print
+              </button>
+              <button
+                onClick={handleSaveReceiptAsImage}
+                className="flex-1 bg-blue-600 text-white py-2 rounded-lg font-medium hover:bg-blue-700"
+              >
+                Save as PNG
+              </button>
+              <button
+                onClick={() => setShowReceiptModal(false)}
+                className="flex-1 bg-gray-500 text-white py-2 rounded-lg font-medium hover:bg-gray-600"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* --- Payment Modal --- */}
-      {showPaymentModal && (
+      {showPaymentModal && paymentResult && (
         <div className="fixed inset-0 flex items-center justify-center z-50">
           <div className="bg-white rounded-2xl shadow-xl max-w-md w-full mx-4">
             <div
@@ -599,12 +907,13 @@ const handleSaveReceiptAsImage = () => {
                     <p className="text-red-800 font-semibold">
                       Total Amount Required:{" "}
                       <span className="text-2xl">
-                        P{paymentResult.required.toFixed(2)}
+                        P{(paymentResult.required || 0).toFixed(2)}
                       </span>
                     </p>
                     <p className="text-red-600 text-sm mt-2">
-                      Please enter at least P{paymentResult.required.toFixed(2)}{" "}
-                      to complete the payment.
+                      Please enter at least P
+                      {(paymentResult.required || 0).toFixed(2)} to complete the
+                      payment.
                     </p>
                   </div>
                 )}
@@ -620,32 +929,25 @@ const handleSaveReceiptAsImage = () => {
                     Cancel
                   </button>
                 )}
-
-                {paymentResult.type === "success" && (
-                  <>
-                    <button
-                      onClick={handlePrintReceipt}
-                      className="flex-1 py-3 rounded-lg font-medium bg-green-500 text-white hover:bg-green-600 transition-colors"
-                    >
-                      Print Receipt
-                    </button>
-                    <button
-                      onClick={handleSaveReceiptAsImage}
-                      className="flex-1 py-3 rounded-lg font-medium bg-yellow-500 text-white hover:bg-yellow-600 transition-colors"
-                    >
-                      Save as PNG
-                    </button>
-                  </>
-                )}
-
-                {paymentResult.type === "error" && (
-                  <button
-                    onClick={() => setShowPaymentModal(false)}
-                    className="flex-1 py-3 rounded-lg font-medium bg-blue-500 text-white hover:bg-blue-600 transition-colors"
-                  >
-                    Try Again
-                  </button>
-                )}
+                <button
+                  onClick={() => {
+                    if (paymentResult.type === "success") {
+                      setShowReceiptModal(true);
+                      setShowPaymentModal(false);
+                    } else {
+                      setShowPaymentModal(false);
+                    }
+                  }}
+                  className={`flex-1 py-3 rounded-lg font-medium transition-colors ${
+                    paymentResult.type === "success"
+                      ? "bg-green-500 text-white hover:bg-green-600"
+                      : "bg-blue-500 text-white hover:bg-blue-600"
+                  }`}
+                >
+                  {paymentResult.type === "success"
+                    ? "View Receipt"
+                    : "Try Again"}
+                </button>
               </div>
             </div>
           </div>

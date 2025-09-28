@@ -40,12 +40,10 @@ app.post("/register", async (req, res) => {
         .json({ success: false, message: "Passwords do not match" });
 
     if (password.length < 6)
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "Password must be at least 6 characters",
-        });
+      return res.status(400).json({
+        success: false,
+        message: "Password must be at least 6 characters",
+      });
 
     db.execute(
       "SELECT * FROM users WHERE email = ?",
@@ -69,13 +67,11 @@ app.post("/register", async (req, res) => {
               return res
                 .status(500)
                 .json({ success: false, message: "Error creating account" });
-            res
-              .status(201)
-              .json({
-                success: true,
-                message: "Account created",
-                userId: results.insertId,
-              });
+            res.status(201).json({
+              success: true,
+              message: "Account created",
+              userId: results.insertId,
+            });
           }
         );
       }
@@ -200,13 +196,26 @@ app.delete("/items/:id", (req, res) => {
 });
 
 // ------------------ ORDERS ------------------
-// Save order
-// Save order
-app.post("/orders", (req, res) => {
-  const { userId, paidAmount, total, discountApplied, changeAmount, orderType } = req.body;
 
-  if (!userId || !paidAmount)
-    return res.status(400).json({ message: "Invalid order data" });
+// Save order - FIXED VERSION
+app.post("/orders", (req, res) => {
+  const {
+    userId,
+    paidAmount, // Changed from paymentAmount to paidAmount
+    total,
+    discountApplied,
+    changeAmount,
+    orderType,
+  } = req.body;
+
+  console.log("Received order data:", req.body);
+
+  if (!userId || paidAmount === undefined || paidAmount === null) {
+    return res.status(400).json({
+      message: "Invalid order data: userId and paidAmount are required",
+      received: req.body,
+    });
+  }
 
   const query = `
     INSERT INTO orders (userId, paidAmount, total, discountApplied, changeAmount, orderType)
@@ -215,17 +224,26 @@ app.post("/orders", (req, res) => {
 
   db.query(
     query,
-    [userId, paidAmount, total, discountApplied ? 1 : 0, changeAmount, orderType],
+    [
+      userId,
+      paidAmount,
+      total || 0,
+      discountApplied ? 1 : 0,
+      changeAmount || 0,
+      orderType || "Dine In",
+    ],
     (err, result) => {
       if (err) {
         console.error("Failed to save order:", err);
         return res.status(500).json({ message: "Failed to save order" });
       }
-      res.status(200).json({ message: "Order saved successfully", orderId: result.insertId });
+      res.status(200).json({
+        message: "Order saved successfully",
+        orderId: result.insertId,
+      });
     }
   );
 });
-
 
 // ------------------ Test ------------------
 app.get("/", (req, res) => {

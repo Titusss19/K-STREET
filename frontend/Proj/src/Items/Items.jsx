@@ -73,7 +73,7 @@ const Items = () => {
   };
 
   return (
-     <div className="p-6 bg-gray-100 min-h-screen">
+    <div className="p-6 bg-gray-100 min-h-screen">
       <div className="max-w-6xl mx-auto bg-white p-6 rounded-lg shadow">
         <div className="flex justify-between items-center mb-4">
           <h1 className="text-2xl font-bold">Items</h1>
