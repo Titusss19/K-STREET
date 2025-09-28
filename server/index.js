@@ -245,6 +245,121 @@ app.post("/orders", (req, res) => {
   );
 });
 
+// ------------------ STORE HOURS ------------------
+
+// Log store open/close action
+app.post("/store-hours/log-store-action", async (req, res) => {
+  try {
+    const { userId, userEmail, action } = req.body;
+
+    if (!userId || !userEmail || !action) {
+      return res.status(400).json({
+        error: "Missing required fields: userId, userEmail, action",
+      });
+    }
+
+    if (!["open", "close"].includes(action)) {
+      return res
+        .status(400)
+        .json({ error: 'Invalid action. Must be "open" or "close"' });
+    }
+
+    const query = `
+      INSERT INTO store_hours_logs (user_id, user_email, action) 
+      VALUES (?, ?, ?)
+    `;
+
+    db.query(query, [userId, userEmail, action], (err, result) => {
+      if (err) {
+        console.error("Error logging store action:", err);
+        return res.status(500).json({ error: "Internal server error" });
+      }
+
+      res.json({
+        success: true,
+        message: `Store ${action} logged successfully`,
+        logId: result.insertId,
+      });
+    });
+  } catch (error) {
+    console.error("Error logging store action:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// Get store action history
+app.get("/store-hours/store-action-history", async (req, res) => {
+  try {
+    const { page = 1, limit = 50 } = req.query;
+    const offset = (page - 1) * limit;
+
+    const query = `
+      SELECT * FROM store_hours_logs 
+      ORDER BY timestamp DESC 
+      LIMIT ? OFFSET ?
+    `;
+
+    db.query(query, [parseInt(limit), parseInt(offset)], (err, logs) => {
+      if (err) {
+        console.error("Error fetching store action history:", err);
+        return res.status(500).json({ error: "Internal server error" });
+      }
+
+      // Get total count for pagination
+      db.query(
+        "SELECT COUNT(*) as total FROM store_hours_logs",
+        (err, countResult) => {
+          if (err) {
+            console.error("Error counting store actions:", err);
+            return res.status(500).json({ error: "Internal server error" });
+          }
+
+          const total = countResult[0].total;
+
+          res.json({
+            logs,
+            pagination: {
+              currentPage: parseInt(page),
+              totalPages: Math.ceil(total / limit),
+              totalItems: total,
+              itemsPerPage: parseInt(limit),
+            },
+          });
+        }
+      );
+    });
+  } catch (error) {
+    console.error("Error fetching store action history:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// Get current store status (latest action)
+app.get("/store-hours/current-store-status", async (req, res) => {
+  try {
+    const query = `
+      SELECT * FROM store_hours_logs 
+      ORDER BY timestamp DESC 
+      LIMIT 1
+    `;
+
+    db.query(query, (err, latestLog) => {
+      if (err) {
+        console.error("Error fetching current store status:", err);
+        return res.status(500).json({ error: "Internal server error" });
+      }
+
+      res.json({
+        isOpen: latestLog.length > 0 ? latestLog[0].action === "open" : false,
+        lastAction: latestLog[0] || null,
+      });
+    });
+  } catch (error) {
+    console.error("Error fetching current store status:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 // ------------------ Test ------------------
 app.get("/", (req, res) => {
   res.json({
@@ -255,6 +370,11 @@ app.get("/", (req, res) => {
       users: "GET /users",
       items: "GET /items",
       orders: "POST /orders",
+      storeHours: {
+        logAction: "POST /store-hours/log-store-action",
+        getHistory: "GET /store-hours/store-action-history",
+        getStatus: "GET /store-hours/current-store-status",
+      },
     },
   });
 });

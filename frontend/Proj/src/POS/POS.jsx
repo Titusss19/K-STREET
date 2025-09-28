@@ -19,8 +19,65 @@ const FoodHubPOS = () => {
 
   const [showReceiptModal, setShowReceiptModal] = useState(false);
   const [receiptContent, setReceiptContent] = useState("");
+  const [storeOpen, setStoreOpen] = useState(false);
 
   const receiptRef = useRef();
+  const [currentTime, setCurrentTime] = useState(new Date());
+
+  // Real-time clock effect
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCurrentTime(new Date());
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, []);
+
+  // Check current store status on component mount
+  useEffect(() => {
+    checkCurrentStoreStatus();
+  }, []);
+
+  const checkCurrentStoreStatus = async () => {
+    try {
+      const res = await axios.get(
+        "http://localhost:3002/store-hours/current-store-status"
+      );
+      setStoreOpen(res.data.isOpen);
+    } catch (error) {
+      console.error("Error checking store status:", error);
+      // Set default to closed if API fails
+      setStoreOpen(false);
+    }
+  };
+
+  const handleStoreToggle = async () => {
+    const user = JSON.parse(localStorage.getItem("user"));
+
+    if (!user) {
+      alert("Please login first");
+      return;
+    }
+
+    const newStatus = !storeOpen;
+    const action = newStatus ? "open" : "close";
+
+    try {
+      // FIXED: Use the correct endpoint
+      await axios.post("http://localhost:3002/store-hours/log-store-action", {
+        userId: user.id,
+        userEmail: user.email,
+        action: action,
+      });
+
+      setStoreOpen(newStatus);
+
+      console.log(`Store ${action}ed successfully by ${user.email}`);
+    } catch (error) {
+      console.error("Error updating store status:", error);
+      alert("Failed to update store status");
+    }
+  };
 
   // Fetch products from backend
   useEffect(() => {
@@ -132,18 +189,23 @@ const FoodHubPOS = () => {
       return;
     }
 
-    if (amount < total) {
+    // RECALCULATE ALL VALUES BEFORE USING THEM
+    const currentSubtotal = calculateSubtotal();
+    const currentTax = currentSubtotal * 0.12;
+    const currentTotal = calculateTotal();
+
+    if (amount < currentTotal) {
       setPaymentResult({
         type: "error",
         title: "Insufficient Amount",
         message: `The amount entered is less than the total.`,
-        required: total,
+        required: currentTotal,
       });
       setShowPaymentModal(true);
       return;
     }
 
-    const change = amount - total;
+    const change = amount - currentTotal;
     setChangeAmount(change);
 
     // Generate receipt string - CENTERED FORMAT
@@ -163,10 +225,10 @@ ${cart
   )
   .join("\n")}
 
-Subtotal: P${subtotal.toFixed(2)}
-Tax: P${tax.toFixed(2)}
+Subtotal: P${currentSubtotal.toFixed(2)}
+Tax: P${currentTax.toFixed(2)}
 ${discountApplied ? "Discount (20%): Applied\n" : ""}
-Total: P${total.toFixed(2)}
+Total: P${currentTotal.toFixed(2)}
 Amount Paid: P${amount.toFixed(2)}
 Change: P${change.toFixed(2)}
 
@@ -192,8 +254,8 @@ Thank you for your order!
     try {
       const res = await axios.post("http://localhost:3002/orders", {
         userId,
-        paidAmount: amount, // Changed from paymentAmount to paidAmount
-        total,
+        paidAmount: amount,
+        total: currentTotal,
         discountApplied,
         changeAmount: change,
         orderType,
@@ -209,7 +271,7 @@ Thank you for your order!
       });
 
       setShowPaymentModal(true);
-      clearCart();
+      // DON'T clear cart here - wait until user views/closes receipt
     } catch (err) {
       console.error("Failed to save order:", err);
       setPaymentResult({
@@ -228,12 +290,12 @@ Thank you for your order!
 
   // --- Print Receipt ---
   const handlePrintReceipt = () => {
-    // Recalculate values to ensure accuracy
+    // Use the current cart state directly
     const currentSubtotal = calculateSubtotal();
     const currentTax = currentSubtotal * 0.12;
     const currentTotal = calculateTotal();
     const currentAmountPaid = parseFloat(paymentAmount) || 0;
-    const currentChange = changeAmount;
+    const currentChange = currentAmountPaid - currentTotal;
 
     const printWindow = window.open("", "PRINT", "height=600,width=400");
 
@@ -397,12 +459,12 @@ Thank you for your order!
 
   // --- Save Receipt as PNG (CENTERED) ---
   const handleSaveReceiptAsImage = () => {
-    // Recalculate values to ensure accuracy
+    // Use the current cart state directly
     const currentSubtotal = calculateSubtotal();
     const currentTax = currentSubtotal * 0.12;
     const currentTotal = calculateTotal();
     const currentAmountPaid = parseFloat(paymentAmount) || 0;
-    const currentChange = changeAmount;
+    const currentChange = currentAmountPaid - currentTotal;
 
     const receiptElement = document.createElement("div");
     receiptElement.style.position = "fixed";
@@ -519,9 +581,9 @@ Thank you for your order!
         <div className="bg-green-600 text-white p-6">
           <div className="flex flex-col md:flex-row justify-between items-start md:items-center">
             <div className="mb-4 md:mb-0">
-              <h1 className="text-3xl font-bold">FOOD HUB</h1>
-              <p className="text-green-100 mt-1">
-                {new Date().toLocaleDateString("en-US", {
+              <h1 className="text-2xl font-bold">Cashier POS System</h1>
+              <p className="text-green-100 mt-1 text-xs">
+                {currentTime.toLocaleDateString("en-US", {
                   year: "numeric",
                   month: "long",
                   day: "numeric",
@@ -531,6 +593,23 @@ Thank you for your order!
                   hour12: true,
                 })}
               </p>
+              {/* Store Status */}
+              <div className="mt-2 flex items-center gap-2">
+                <span className="text-green-100 text-xs">Store Status:</span>
+                <button
+                  className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
+                    storeOpen
+                      ? "bg-green-500 hover:bg-green-600 text-white"
+                      : "bg-red-500 hover:bg-red-600 text-white"
+                  }`}
+                  onClick={handleStoreToggle}
+                >
+                  {storeOpen ? "OPEN" : "CLOSED"}
+                </button>
+                <span className="text-green-100 text-xs">
+                  {storeOpen ? "9:00 AM - 10:00 PM" : "Store Closed"}
+                </span>
+              </div>
             </div>
             <div className="text-left md:text-right">
               <p className="text-xl font-semibold">Casher POS System</p>
@@ -809,7 +888,10 @@ Thank you for your order!
             <div className="p-4 bg-green-600 text-white rounded-t-2xl flex justify-between items-center">
               <h3 className="text-xl font-bold">Receipt</h3>
               <button
-                onClick={() => setShowReceiptModal(false)}
+                onClick={() => {
+                  setShowReceiptModal(false);
+                  clearCart(); // Clear cart only when closing receipt
+                }}
                 className="text-white hover:text-gray-200 text-2xl"
               >
                 ×
@@ -841,7 +923,10 @@ Thank you for your order!
                 Save as PNG
               </button>
               <button
-                onClick={() => setShowReceiptModal(false)}
+                onClick={() => {
+                  setShowReceiptModal(false);
+                  clearCart(); // Clear cart only when closing receipt
+                }}
                 className="flex-1 bg-gray-500 text-white py-2 rounded-lg font-medium hover:bg-gray-600"
               >
                 Close
@@ -867,9 +952,7 @@ Thank you for your order!
                 <button
                   onClick={() => {
                     setShowPaymentModal(false);
-                    if (paymentResult.type === "success") {
-                      clearCart();
-                    }
+                    // Don't clear cart here - wait for receipt
                   }}
                   className="text-white hover:text-gray-200 text-2xl"
                 >
