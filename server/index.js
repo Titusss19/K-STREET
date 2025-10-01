@@ -25,10 +25,11 @@ db.connect((err) => {
 
 // ------------------ AUTH ------------------
 
-// Register
+// Register - FIXED VERSION
 app.post("/register", async (req, res) => {
   try {
-    const { email, password, confirmPassword } = req.body;
+    const { email, password, confirmPassword, role, status } = req.body;
+
     if (!email || !password || !confirmPassword)
       return res
         .status(400)
@@ -59,17 +60,24 @@ app.post("/register", async (req, res) => {
             .json({ success: false, message: "Email already exists" });
 
         const hashedPassword = await bcrypt.hash(password, 10);
+
+        // Use role and status from request, or default values
+        const userRole = role || "cashier";
+        const userStatus = status || "Active";
+
         db.execute(
-          "INSERT INTO users (email, password) VALUES (?, ?)",
-          [email, hashedPassword],
+          "INSERT INTO users (email, password, role, status) VALUES (?, ?, ?, ?)",
+          [email, hashedPassword, userRole, userStatus],
           (err, results) => {
-            if (err)
+            if (err) {
+              console.error("Error creating account:", err);
               return res
                 .status(500)
                 .json({ success: false, message: "Error creating account" });
+            }
             res.status(201).json({
               success: true,
-              message: "Account created",
+              message: "Account created successfully",
               userId: results.insertId,
             });
           }
@@ -82,7 +90,7 @@ app.post("/register", async (req, res) => {
   }
 });
 
-// Login
+// Login - UPDATED TO INCLUDE ROLE
 app.post("/login", (req, res) => {
   try {
     const { email, password } = req.body;
@@ -114,7 +122,12 @@ app.post("/login", (req, res) => {
         res.json({
           success: true,
           message: "Login successful",
-          user: { id: user.id, email: user.email },
+          user: {
+            id: user.id,
+            email: user.email,
+            role: user.role || "cashier",
+            status: user.status || "Active",
+          },
         });
       }
     );
@@ -124,16 +137,135 @@ app.post("/login", (req, res) => {
   }
 });
 
-// Get all users
+// Get all users - FIXED VERSION
 app.get("/users", (req, res) => {
   db.execute(
-    "SELECT id, email, created_at FROM users ORDER BY created_at DESC",
+    "SELECT id, email, role, status, created_at FROM users ORDER BY created_at DESC",
     (err, results) => {
-      if (err)
+      if (err) {
+        console.error("Error fetching users:", err);
         return res
           .status(500)
           .json({ success: false, message: "Error fetching users" });
+      }
       res.json({ success: true, users: results });
+    }
+  );
+});
+
+// Update user - NEW ENDPOINT
+app.put("/users/:id", (req, res) => {
+  const { id } = req.params;
+  const { email, role, status } = req.body;
+
+  if (!email || !role || !status) {
+    return res.status(400).json({
+      success: false,
+      message: "Email, role, and status are required",
+    });
+  }
+
+  db.execute(
+    "UPDATE users SET email = ?, role = ?, status = ? WHERE id = ?",
+    [email, role, status, id],
+    (err, results) => {
+      if (err) {
+        console.error("Error updating user:", err);
+        return res.status(500).json({
+          success: false,
+          message: "Error updating user",
+        });
+      }
+
+      if (results.affectedRows === 0) {
+        return res.status(404).json({
+          success: false,
+          message: "User not found",
+        });
+      }
+
+      res.json({
+        success: true,
+        message: "User updated successfully",
+      });
+    }
+  );
+});
+
+// Delete user - NEW ENDPOINT
+app.delete("/users/:id", (req, res) => {
+  const { id } = req.params;
+
+  db.execute("DELETE FROM users WHERE id = ?", [id], (err, results) => {
+    if (err) {
+      console.error("Error deleting user:", err);
+      return res.status(500).json({
+        success: false,
+        message: "Error deleting user",
+      });
+    }
+
+    if (results.affectedRows === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    res.json({
+      success: true,
+      message: "User deleted successfully",
+    });
+  });
+});
+
+// ------------------ ANNOUNCEMENTS ------------------
+
+// Get all announcements - NEW ENDPOINT
+app.get("/announcements", (req, res) => {
+  db.execute(
+    "SELECT * FROM announcements ORDER BY created_at DESC",
+    (err, results) => {
+      if (err) {
+        console.error("Error fetching announcements:", err);
+        return res.status(500).json({
+          success: false,
+          message: "Error fetching announcements",
+        });
+      }
+      res.json({ success: true, announcements: results });
+    }
+  );
+});
+
+// Create announcement - NEW ENDPOINT
+app.post("/announcements", (req, res) => {
+  const { title, message, type } = req.body;
+
+  if (!title || !message || !type) {
+    return res.status(400).json({
+      success: false,
+      message: "Title, message, and type are required",
+    });
+  }
+
+  db.execute(
+    "INSERT INTO announcements (title, message, type) VALUES (?, ?, ?)",
+    [title, message, type],
+    (err, results) => {
+      if (err) {
+        console.error("Error creating announcement:", err);
+        return res.status(500).json({
+          success: false,
+          message: "Error creating announcement",
+        });
+      }
+
+      res.status(201).json({
+        success: true,
+        message: "Announcement created successfully",
+        announcementId: results.insertId,
+      });
     }
   );
 });
@@ -197,11 +329,11 @@ app.delete("/items/:id", (req, res) => {
 
 // ------------------ ORDERS ------------------
 
-// Save order - FIXED VERSION
+// Save order
 app.post("/orders", (req, res) => {
   const {
     userId,
-    paidAmount, // Changed from paymentAmount to paidAmount
+    paidAmount,
     total,
     discountApplied,
     changeAmount,
@@ -243,6 +375,24 @@ app.post("/orders", (req, res) => {
       });
     }
   );
+});
+
+// Get all orders
+app.get("/orders", (req, res) => {
+  const query = `
+    SELECT o.*, u.email AS cashier 
+    FROM orders o
+    LEFT JOIN users u ON o.userId = u.id
+    ORDER BY o.created_at DESC
+  `;
+
+  db.query(query, (err, results) => {
+    if (err) {
+      console.error("Error fetching orders:", err);
+      return res.status(500).json({ message: "Failed to fetch orders" });
+    }
+    res.json(results);
+  });
 });
 
 // ------------------ STORE HOURS ------------------
@@ -365,9 +515,17 @@ app.get("/", (req, res) => {
   res.json({
     message: "Backend is running!",
     endpoints: {
-      register: "POST /register",
-      login: "POST /login",
-      users: "GET /users",
+      auth: {
+        register: "POST /register",
+        login: "POST /login",
+        users: "GET /users",
+        updateUser: "PUT /users/:id",
+        deleteUser: "DELETE /users/:id",
+      },
+      announcements: {
+        get: "GET /announcements",
+        create: "POST /announcements",
+      },
       items: "GET /items",
       orders: "POST /orders",
       storeHours: {

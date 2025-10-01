@@ -25,11 +25,6 @@ function Navbar({
           {/* Right Section - User Info and Navigation */}
           <div className="flex items-center space-x-10">
             {/* Welcome Message */}
-            {showWelcome && user && (
-              <span className="text-gray-600 hidden md:block">
-                Welcome, {user.email}
-              </span>
-            )}
 
             {/* Navigation Buttons */}
             <button
