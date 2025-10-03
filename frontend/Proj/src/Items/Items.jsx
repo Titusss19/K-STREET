@@ -12,6 +12,8 @@ const Items = () => {
     image: "",
   });
   const [viewItem, setViewItem] = useState(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage] = useState(10);
 
   const API = "http://localhost:3002/items";
 
@@ -72,6 +74,24 @@ const Items = () => {
     setShowFormModal(true);
   };
 
+  // Pagination logic
+  const indexOfLastItem = currentPage * itemsPerPage;
+  const indexOfFirstItem = indexOfLastItem - itemsPerPage;
+  const currentItems = items.slice(indexOfFirstItem, indexOfLastItem);
+  const totalPages = Math.ceil(items.length / itemsPerPage);
+
+  const handleNextPage = () => {
+    if (currentPage < totalPages) {
+      setCurrentPage(currentPage + 1);
+    }
+  };
+
+  const handlePrevPage = () => {
+    if (currentPage > 1) {
+      setCurrentPage(currentPage - 1);
+    }
+  };
+
   return (
     <div className="p-6 bg-gray-100 min-h-screen">
       <div className="max-w-6xl mx-auto bg-white p-6 rounded-lg shadow">
@@ -89,66 +109,136 @@ const Items = () => {
           </button>
         </div>
 
-        {/* Items Table */}
-        <div className="overflow-x-auto">
-          <table className="min-w-full border border-gray-200 rounded-lg">
-            <thead className="bg-green-600 text-white">
-              <tr>
-                <th className="px-4 py-2 text-left">#</th>
-                <th className="px-4 py-2 text-left">Name</th>
-                <th className="px-4 py-2 text-left">Category</th>
-                <th className="px-4 py-2 text-left">Price</th>
-                <th className="px-4 py-2 text-center">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {items.map((item) => (
-                <tr key={item.id} className="border-b">
-                  <td className="px-4 py-2">{item.id}</td>
-                  <td className="px-4 py-2">{item.name}</td>
-                  <td className="px-4 py-2">{item.category}</td>
-                  <td className="px-4 py-2">₱{item.price}</td>
-                  <td className="px-4 py-2 text-center space-x-2">
-                    <button
-                      onClick={() => setViewItem(item)}
-                      className="bg-green-500 text-white px-3 py-1 rounded hover:bg-green-600"
-                    >
-                      View
-                    </button>
-                    <button
-                      onClick={() => handleEdit(item)}
-                      className="bg-blue-500 text-white px-3 py-1 rounded hover:bg-blue-600"
-                    >
-                      Edit
-                    </button>
-                    <button
-                      onClick={() => handleDelete(item.id)}
-                      className="bg-red-500 text-white px-3 py-1 rounded hover:bg-red-600"
-                    >
-                      Delete
-                    </button>
-                  </td>
+        {/* Modern Items Table */}
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="bg-gradient-to-r from-green-600 to-emerald-600 text-white">
+                  <th className="px-6 py-4 text-left text-sm font-semibold tracking-wide">
+                    #
+                  </th>
+                  <th className="px-6 py-4 text-left text-sm font-semibold tracking-wide">
+                    Name
+                  </th>
+                  <th className="px-6 py-4 text-left text-sm font-semibold tracking-wide">
+                    Category
+                  </th>
+                  <th className="px-6 py-4 text-right text-sm font-semibold tracking-wide">
+                    Price
+                  </th>
+                  <th className="px-6 py-4 text-center text-sm font-semibold tracking-wide">
+                    Actions
+                  </th>
                 </tr>
-              ))}
-
-              {items.length === 0 && (
-                <tr>
-                  <td
-                    colSpan="5"
-                    className="text-center py-4 text-gray-500 italic"
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {currentItems.map((item) => (
+                  <tr
+                    key={item.id}
+                    className="hover:bg-gradient-to-r hover:from-green-50 hover:to-emerald-50 transition-colors duration-150"
                   >
-                    No items available.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+                    <td className="px-6 py-4 text-sm font-medium text-gray-900">
+                      #{item.id}
+                    </td>
+                    <td className="px-6 py-4 text-sm text-gray-700">
+                      {item.name}
+                    </td>
+                    <td className="px-6 py-4 text-sm text-gray-600">
+                      <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                        {item.category}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 text-sm font-semibold text-gray-900 text-right">
+                      ₱{parseFloat(item.price).toFixed(2)}
+                    </td>
+                    <td className="px-6 py-4 text-center">
+                      <div className="flex justify-center gap-2">
+                        <button
+                          onClick={() => setViewItem(item)}
+                          className="bg-gradient-to-r from-green-500 to-emerald-500 text-white px-3 py-1.5 rounded-lg hover:from-green-600 hover:to-emerald-600 transition-all duration-200 text-sm font-medium shadow-sm hover:shadow-md"
+                        >
+                          View
+                        </button>
+                        <button
+                          onClick={() => handleEdit(item)}
+                          className="bg-gradient-to-r from-blue-500 to-blue-600 text-white px-3 py-1.5 rounded-lg hover:from-blue-600 hover:to-blue-700 transition-all duration-200 text-sm font-medium shadow-sm hover:shadow-md"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          onClick={() => handleDelete(item.id)}
+                          className="bg-gradient-to-r from-red-500 to-red-600 text-white px-3 py-1.5 rounded-lg hover:from-red-600 hover:to-red-700 transition-all duration-200 text-sm font-medium shadow-sm hover:shadow-md"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+
+                {items.length === 0 && (
+                  <tr>
+                    <td colSpan="5" className="text-center py-12">
+                      <p className="text-gray-500 font-medium">
+                        No items available
+                      </p>
+                      <p className="text-gray-400 text-sm mt-1">
+                        Add your first item to get started
+                      </p>
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Pagination */}
+          {items.length > 0 && (
+            <div className="bg-gray-50 px-6 py-4 border-t border-gray-200 flex items-center justify-between">
+              <div className="text-sm text-gray-700">
+                Showing{" "}
+                <span className="font-medium">{indexOfFirstItem + 1}</span> to{" "}
+                <span className="font-medium">
+                  {Math.min(indexOfLastItem, items.length)}
+                </span>{" "}
+                of <span className="font-medium">{items.length}</span> results
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={handlePrevPage}
+                  disabled={currentPage === 1}
+                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                    currentPage === 1
+                      ? "bg-gray-200 text-gray-400 cursor-not-allowed"
+                      : "bg-white text-gray-700 hover:bg-gray-100 border border-gray-300"
+                  }`}
+                >
+                  Previous
+                </button>
+                <div className="flex items-center px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm font-medium text-gray-700">
+                  Page {currentPage} of {totalPages}
+                </div>
+                <button
+                  onClick={handleNextPage}
+                  disabled={currentPage === totalPages}
+                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                    currentPage === totalPages
+                      ? "bg-gray-200 text-gray-400 cursor-not-allowed"
+                      : "bg-gradient-to-r from-green-500 to-emerald-500 text-white hover:from-green-600 hover:to-emerald-600"
+                  }`}
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Add/Edit Item Modal */}
         {showFormModal && (
-          <div className="fixed inset-0  flex items-center justify-center">
-            <div className="bg-white p-6 rounded-lg shadow-lg max-w-lg w-full">
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+            <div className="bg-white p-6 rounded-2xl shadow-2xl max-w-lg w-full">
               <h2 className="text-xl font-bold mb-4">
                 {editingItem ? "Edit Item" : "Add New Item"}
               </h2>
@@ -160,14 +250,14 @@ const Items = () => {
                   onChange={(e) =>
                     setNewItem({ ...newItem, name: e.target.value })
                   }
-                  className="border p-2 rounded w-full"
+                  className="border border-gray-300 p-2.5 rounded-lg w-full focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all"
                 />
                 <select
                   value={newItem.category}
                   onChange={(e) =>
                     setNewItem({ ...newItem, category: e.target.value })
                   }
-                  className="border p-2 rounded w-full"
+                  className="border border-gray-300 p-2.5 rounded-lg w-full focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all"
                 >
                   <option value="Food">Food</option>
                   <option value="Drinks">Drinks</option>
@@ -181,7 +271,7 @@ const Items = () => {
                   onChange={(e) =>
                     setNewItem({ ...newItem, price: e.target.value })
                   }
-                  className="border p-2 rounded w-full"
+                  className="border border-gray-300 p-2.5 rounded-lg w-full focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all"
                 />
                 <input
                   type="text"
@@ -190,13 +280,13 @@ const Items = () => {
                   onChange={(e) =>
                     setNewItem({ ...newItem, image: e.target.value })
                   }
-                  className="border p-2 rounded w-full"
+                  className="border border-gray-300 p-2.5 rounded-lg w-full focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all"
                 />
               </div>
-              <div className="mt-4 flex justify-end gap-2">
+              <div className="mt-6 flex justify-end gap-3">
                 <button
                   onClick={handleSave}
-                  className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700"
+                  className="bg-gradient-to-r from-green-600 to-emerald-600 text-white px-6 py-2.5 rounded-lg hover:from-green-700 hover:to-emerald-700 font-medium shadow-lg hover:shadow-xl transition-all duration-200"
                 >
                   {editingItem ? "Update" : "Save"}
                 </button>
@@ -205,7 +295,7 @@ const Items = () => {
                     setShowFormModal(false);
                     setEditingItem(null);
                   }}
-                  className="bg-gray-400 text-white px-4 py-2 rounded hover:bg-gray-500"
+                  className="bg-gray-100 text-gray-700 px-6 py-2.5 rounded-lg hover:bg-gray-200 font-medium transition-all duration-200"
                 >
                   Cancel
                 </button>
@@ -216,27 +306,34 @@ const Items = () => {
 
         {/* View Modal */}
         {viewItem && (
-          <div className="fixed inset-0 flex items-center justify-center">
-            <div className="bg-white p-6 rounded-lg shadow-lg max-w-md w-full">
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+            <div className="bg-white p-6 rounded-2xl shadow-2xl max-w-md w-full">
               <h2 className="text-xl font-bold mb-4">Item Details</h2>
               <img
                 src={viewItem.image}
                 alt={viewItem.name}
-                className="w-full h-40 object-cover rounded mb-4"
+                className="w-full h-48 object-cover rounded-xl mb-4 shadow-md"
               />
-              <p>
-                <strong>Name:</strong> {viewItem.name}
-              </p>
-              <p>
-                <strong>Category:</strong> {viewItem.category}
-              </p>
-              <p>
-                <strong>Price:</strong> ₱{viewItem.price}
-              </p>
-              <div className="mt-4 text-right">
+              <div className="space-y-2">
+                <p className="text-gray-700">
+                  <strong className="text-gray-900">Name:</strong>{" "}
+                  {viewItem.name}
+                </p>
+                <p className="text-gray-700">
+                  <strong className="text-gray-900">Category:</strong>{" "}
+                  <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                    {viewItem.category}
+                  </span>
+                </p>
+                <p className="text-gray-700">
+                  <strong className="text-gray-900">Price:</strong> ₱
+                  {parseFloat(viewItem.price).toFixed(2)}
+                </p>
+              </div>
+              <div className="mt-6 text-right">
                 <button
                   onClick={() => setViewItem(null)}
-                  className="bg-gray-500 text-white px-4 py-2 rounded hover:bg-gray-600"
+                  className="bg-gray-100 text-gray-700 px-6 py-2.5 rounded-lg hover:bg-gray-200 font-medium transition-all duration-200"
                 >
                   Close
                 </button>

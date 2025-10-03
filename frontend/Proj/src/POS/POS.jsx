@@ -46,7 +46,6 @@ const FoodHubPOS = () => {
       setStoreOpen(res.data.isOpen);
     } catch (error) {
       console.error("Error checking store status:", error);
-      // Set default to closed if API fails
       setStoreOpen(false);
     }
   };
@@ -63,7 +62,6 @@ const FoodHubPOS = () => {
     const action = newStatus ? "open" : "close";
 
     try {
-      // FIXED: Use the correct endpoint
       await axios.post("http://localhost:3002/store-hours/log-store-action", {
         userId: user.id,
         userEmail: user.email,
@@ -71,7 +69,6 @@ const FoodHubPOS = () => {
       });
 
       setStoreOpen(newStatus);
-
       console.log(`Store ${action}ed successfully by ${user.email}`);
     } catch (error) {
       console.error("Error updating store status:", error);
@@ -84,7 +81,6 @@ const FoodHubPOS = () => {
     const fetchProducts = async () => {
       try {
         const res = await axios.get("http://localhost:3002/items");
-        // Ensure price is number
         const productsWithNumberPrice = res.data.map((product) => ({
           ...product,
           price: Number(product.price) || 0,
@@ -120,7 +116,6 @@ const FoodHubPOS = () => {
         )
       );
     } else {
-      // Ensure price is number when adding to cart
       setCart([
         ...cart,
         {
@@ -165,7 +160,7 @@ const FoodHubPOS = () => {
     const subtotal = calculateSubtotal();
     const tax = subtotal * 0.12;
     let total = subtotal + tax;
-    if (discountApplied) total *= 0.8; // Apply 20% discount
+    if (discountApplied) total *= 0.8;
     return total;
   };
 
@@ -189,7 +184,6 @@ const FoodHubPOS = () => {
       return;
     }
 
-    // RECALCULATE ALL VALUES BEFORE USING THEM
     const currentSubtotal = calculateSubtotal();
     const currentTax = currentSubtotal * 0.12;
     const currentTotal = calculateTotal();
@@ -208,7 +202,6 @@ const FoodHubPOS = () => {
     const change = amount - currentTotal;
     setChangeAmount(change);
 
-    // Generate receipt string - CENTERED FORMAT
     const receipt = `
 FOOD HUB RECEIPT
 =============================
@@ -250,7 +243,6 @@ Thank you for your order!
       return;
     }
 
-    // Send order to backend with correct field names
     try {
       const res = await axios.post("http://localhost:3002/orders", {
         userId,
@@ -271,7 +263,6 @@ Thank you for your order!
       });
 
       setShowPaymentModal(true);
-      // DON'T clear cart here - wait until user views/closes receipt
     } catch (err) {
       console.error("Failed to save order:", err);
       setPaymentResult({
@@ -290,7 +281,6 @@ Thank you for your order!
 
   // --- Print Receipt ---
   const handlePrintReceipt = () => {
-    // Use the current cart state directly
     const currentSubtotal = calculateSubtotal();
     const currentTax = currentSubtotal * 0.12;
     const currentTotal = calculateTotal();
@@ -457,9 +447,8 @@ Thank you for your order!
     }, 500);
   };
 
-  // --- Save Receipt as PNG (CENTERED) ---
+  // --- Save Receipt as PNG ---
   const handleSaveReceiptAsImage = () => {
-    // Use the current cart state directly
     const currentSubtotal = calculateSubtotal();
     const currentTax = currentSubtotal * 0.12;
     const currentTotal = calculateTotal();
@@ -555,7 +544,6 @@ Thank you for your order!
 
     document.body.appendChild(receiptElement);
 
-    // Calculate dynamic height based on content
     const dynamicHeight = Math.max(450, receiptElement.scrollHeight);
 
     html2canvas(receiptElement, {
@@ -575,14 +563,16 @@ Thank you for your order!
   };
 
   return (
-    <div className="min-h-screen bg-gray-100 p-4">
-      <div className="max-w-7xl mx-auto bg-white rounded-lg shadow-lg overflow-hidden">
-        {/* Header */}
-        <div className="bg-green-600 text-white p-6">
-          <div className="flex flex-col md:flex-row justify-between items-start md:items-center">
-            <div className="mb-4 md:mb-0">
-              <h1 className="text-2xl font-bold">Cashier POS System</h1>
-              <p className="text-green-100 mt-1 text-xs">
+    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 p-4">
+      <div className="max-w-7xl mx-auto bg-white rounded-2xl shadow-xl overflow-hidden">
+        {/* Modern Header */}
+        <div className="bg-gradient-to-r from-green-600 to-emerald-600 text-white p-6">
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+            <div className="flex-1">
+              <h1 className="text-3xl font-bold tracking-tight">
+                Cashier POS System
+              </h1>
+              <p className="text-green-100 mt-2 text-sm font-medium">
                 {currentTime.toLocaleDateString("en-US", {
                   year: "numeric",
                   month: "long",
@@ -594,47 +584,46 @@ Thank you for your order!
                 })}
               </p>
               {/* Store Status */}
-              <div className="mt-2 flex items-center gap-2">
-                <span className="text-green-100 text-xs">Store Status:</span>
+              <div className="mt-3 flex items-center gap-3">
+                <span className="text-green-100 text-sm font-medium">
+                  Store Status:
+                </span>
                 <button
-                  className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
+                  className={`px-4 py-1.5 rounded-full text-sm font-semibold transition-all shadow-lg ${
                     storeOpen
-                      ? "bg-green-500 hover:bg-green-600 text-white"
+                      ? "bg-white text-green-600 hover:bg-green-50"
                       : "bg-red-500 hover:bg-red-600 text-white"
                   }`}
                   onClick={handleStoreToggle}
                 >
                   {storeOpen ? "OPEN" : "CLOSED"}
                 </button>
-                <span className="text-green-100 text-xs">
+                <span className="text-green-100 text-sm">
                   {storeOpen ? "9:00 AM - 10:00 PM" : "Store Closed"}
                 </span>
               </div>
             </div>
-            <div className="text-left md:text-right">
-              <p className="text-xl font-semibold">Casher POS System</p>
-              <div className="flex space-x-3 mt-3">
-                <button
-                  className={`px-6 py-2 rounded-lg font-medium transition-colors ${
-                    orderType === "Dine In"
-                      ? "bg-white text-green-600 shadow-md"
-                      : "bg-green-500 hover:bg-green-400"
-                  }`}
-                  onClick={() => setOrderType("Dine In")}
-                >
-                  Dine In
-                </button>
-                <button
-                  className={`px-6 py-2 rounded-lg font-medium transition-colors ${
-                    orderType === "Take-Out"
-                      ? "bg-white text-green-600 shadow-md"
-                      : "bg-green-500 hover:bg-green-400"
-                  }`}
-                  onClick={() => setOrderType("Take-Out")}
-                >
-                  Take-Out
-                </button>
-              </div>
+            <div className="flex gap-3">
+              <button
+                className={`px-8 py-3 rounded-xl font-semibold transition-all shadow-lg ${
+                  orderType === "Dine In"
+                    ? "bg-white text-green-600 shadow-xl scale-105"
+                    : "bg-green bg-opacity-20 hover:bg-opacity-30 text-white"
+                }`}
+                onClick={() => setOrderType("Dine In")}
+              >
+                Dine In
+              </button>
+              <button
+                className={`px-8 py-3 rounded-xl font-semibold transition-all shadow-lg ${
+                  orderType === "Take-Out"
+                    ? "bg-white text-green-600 shadow-xl scale-105"
+                    : "bg-green bg-opacity-20 hover:bg-opacity-30 text-white"
+                }`}
+                onClick={() => setOrderType("Take-Out")}
+              >
+                Take-Out
+              </button>
             </div>
           </div>
         </div>
@@ -642,8 +631,8 @@ Thank you for your order!
         <div className="flex flex-col lg:flex-row">
           {/* Product List Section */}
           <div className="lg:w-2/3 p-6 border-r border-gray-200">
-            <h2 className="text-2xl font-bold text-gray-800 mb-4">
-              Product List
+            <h2 className="text-2xl font-bold text-gray-800 mb-6">
+              Product Catalog
             </h2>
 
             {/* Search and Category Filter */}
@@ -652,7 +641,7 @@ Thank you for your order!
                 <input
                   type="text"
                   placeholder="Search products..."
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                  className="w-full px-5 py-3 border-2 border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all"
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                 />
@@ -661,10 +650,10 @@ Thank you for your order!
                 {categories.map((category) => (
                   <button
                     key={category}
-                    className={`px-4 py-2 rounded-lg font-medium whitespace-nowrap transition-colors ${
+                    className={`px-5 py-3 rounded-xl font-semibold whitespace-nowrap transition-all shadow-sm ${
                       activeCategory === category
-                        ? "bg-green-600 text-white shadow-md"
-                        : "bg-gray-200 text-gray-700 hover:bg-gray-300"
+                        ? "bg-gradient-to-r from-green-600 to-emerald-600 text-white shadow-lg scale-105"
+                        : "bg-gray-100 text-gray-700 hover:bg-gray-200"
                     }`}
                     onClick={() => setActiveCategory(category)}
                   >
@@ -675,41 +664,41 @@ Thank you for your order!
             </div>
 
             {/* Product Grid */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-5">
               {filteredProducts.map((product) => (
                 <div
                   key={product.id}
-                  className="border border-gray-200 rounded-xl p-4 hover:shadow-lg transition-shadow duration-300"
+                  className="group border-2 border-gray-100 rounded-2xl p-4 hover:shadow-2xl hover:border-green-200 transition-all duration-300 hover:scale-105"
                 >
                   {/* Product Image */}
-                  <div className="h-40 rounded-lg mb-3 overflow-hidden flex items-center justify-center bg-gray-100">
+                  <div className="h-40 rounded-xl mb-3 overflow-hidden flex items-center justify-center bg-gradient-to-br from-gray-50 to-gray-100">
                     {product.image ? (
                       <img
                         src={product.image}
                         alt={product.name}
-                        className="object-cover h-full w-full"
+                        className="object-cover h-full w-full group-hover:scale-110 transition-transform duration-300"
                       />
                     ) : (
-                      <span className="text-gray-500 font-medium">
+                      <span className="text-gray-400 font-medium">
                         No Image
                       </span>
                     )}
                   </div>
-                  <h3 className="font-semibold text-lg text-gray-800 mb-1">
+                  <h3 className="font-bold text-lg text-gray-800 mb-1">
                     {product.name}
                   </h3>
-                  <p className="text-gray-600 text-sm mb-3">
+                  <span className="inline-block px-3 py-1 bg-green-100 text-green-700 text-xs font-semibold rounded-full mb-3">
                     {product.category}
-                  </p>
+                  </span>
                   <div className="flex justify-between items-center">
                     <span className="text-green-600 font-bold text-xl">
                       P{((Number(product.price) || 0) * 1.12).toFixed(2)}
                     </span>
                     <button
-                      className="bg-green-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-green-700 transition-colors focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2"
+                      className="bg-gradient-to-r from-green-600 to-emerald-600 text-white px-5 py-2.5 rounded-xl font-semibold hover:from-green-700 hover:to-emerald-700 transition-all shadow-lg hover:shadow-xl"
                       onClick={() => addToCart(product)}
                     >
-                      Add to Cart
+                      Add
                     </button>
                   </div>
                 </div>
@@ -718,13 +707,13 @@ Thank you for your order!
           </div>
 
           {/* Order Summary Section */}
-          <div className="lg:w-1/3 p-6 bg-gray-50">
+          <div className="lg:w-1/3 p-6 bg-gradient-to-br from-gray-50 to-white">
             <div className="flex justify-between items-center mb-6">
               <h2 className="text-2xl font-bold text-gray-800">
                 Current Order
               </h2>
               <button
-                className="bg-red-500 text-white px-4 py-2 rounded-lg font-medium hover:bg-red-600 transition-colors focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2"
+                className="bg-gradient-to-r from-red-500 to-red-600 text-white px-5 py-2.5 rounded-xl font-semibold hover:from-red-600 hover:to-red-700 transition-all shadow-lg hover:shadow-xl"
                 onClick={clearCart}
               >
                 Clear All
@@ -734,73 +723,75 @@ Thank you for your order!
             {/* Discount Button */}
             <div className="mb-4">
               <button
-                className={`w-full py-3 rounded-lg font-medium text-white ${
+                className={`w-full py-3.5 rounded-xl font-semibold text-white transition-all shadow-lg ${
                   discountApplied
-                    ? "bg-gray-400 cursor-not-allowed"
-                    : "bg-green-600 hover:bg-green-700"
+                    ? "bg-gray-300 cursor-not-allowed"
+                    : "bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 hover:shadow-xl"
                 }`}
                 onClick={applyDiscount}
                 disabled={discountApplied}
               >
-                Apply PWD/Senior Discount 20%
+                {discountApplied
+                  ? "Discount Applied (20%)"
+                  : "Apply PWD/Senior Discount 20%"}
               </button>
             </div>
 
             {/* Cart Items */}
-            <div className="mb-6 max-h-80 overflow-y-auto border border-gray-200 rounded-lg bg-white">
+            <div className="mb-6 max-h-80 overflow-y-auto border-2 border-gray-200 rounded-2xl bg-white shadow-inner">
               {cart.length === 0 ? (
-                <div className="text-center py-12 text-gray-500">
-                  <div className="text-4xl mb-2">🛒</div>
-                  <p className="text-lg font-medium">Empty Cart</p>
-                  <p className="text-sm">Add items to get started</p>
+                <div className="text-center py-12 text-gray-400">
+                  <div className="text-5xl mb-3">🛒</div>
+                  <p className="text-lg font-semibold text-gray-500">
+                    Empty Cart
+                  </p>
+                  <p className="text-sm mt-1">Add items to get started</p>
                 </div>
               ) : (
                 <div className="p-4 space-y-4">
                   {cart.map((item) => (
                     <div
                       key={item.id}
-                      className="flex justify-between items-center border-b border-gray-100 pb-4 last:border-b-0"
+                      className="flex justify-between items-center border-b border-gray-100 pb-4 last:border-b-0 hover:bg-green-50 p-3 rounded-xl transition-all"
                     >
                       <div className="flex-1">
-                        <p className="font-semibold text-gray-800">
-                          {item.name}
-                        </p>
-                        <p className="text-sm text-gray-600">
+                        <p className="font-bold text-gray-800">{item.name}</p>
+                        <p className="text-sm text-gray-600 mt-0.5">
                           P{(Number(item.price) || 0).toFixed(2)} ×{" "}
                           {item.quantity}
                         </p>
-                        <p className="text-green-600 font-semibold">
+                        <p className="text-green-600 font-bold mt-1">
                           P
                           {((Number(item.price) || 0) * item.quantity).toFixed(
                             2
                           )}
                         </p>
                       </div>
-                      <div className="flex items-center space-x-3">
+                      <div className="flex items-center gap-2">
                         <button
-                          className="w-8 h-8 bg-gray-200 rounded-full flex items-center justify-center hover:bg-gray-300 transition-colors"
+                          className="w-9 h-9 bg-gray-200 rounded-full flex items-center justify-center hover:bg-gray-300 transition-all font-bold text-lg shadow-sm hover:shadow-md"
                           onClick={() =>
                             updateQuantity(item.id, item.quantity - 1)
                           }
                         >
-                          <span className="text-lg font-bold">-</span>
+                          -
                         </button>
-                        <span className="font-semibold w-6 text-center">
+                        <span className="font-bold w-8 text-center text-lg">
                           {item.quantity}
                         </span>
                         <button
-                          className="w-8 h-8 bg-gray-200 rounded-full flex items-center justify-center hover:bg-gray-300 transition-colors"
+                          className="w-9 h-9 bg-gray-200 rounded-full flex items-center justify-center hover:bg-gray-300 transition-all font-bold text-lg shadow-sm hover:shadow-md"
                           onClick={() =>
                             updateQuantity(item.id, item.quantity + 1)
                           }
                         >
-                          <span className="text-lg font-bold">+</span>
+                          +
                         </button>
                         <button
-                          className="w-8 h-8 bg-red-100 text-red-600 rounded-full flex items-center justify-center hover:bg-red-200 transition-colors ml-2"
+                          className="w-9 h-9 bg-red-100 text-red-600 rounded-full flex items-center justify-center hover:bg-red-200 transition-all ml-1 font-bold text-lg shadow-sm hover:shadow-md"
                           onClick={() => removeFromCart(item.id)}
                         >
-                          <span className="text-lg font-bold">×</span>
+                          ×
                         </button>
                       </div>
                     </div>
@@ -810,25 +801,27 @@ Thank you for your order!
             </div>
 
             {/* Order Summary */}
-            <div className="border-t border-gray-200 pt-6">
+            <div className="border-t-2 border-gray-200 pt-6">
               <div className="space-y-3 mb-6">
                 <div className="flex justify-between text-gray-700">
-                  <span>Subtotal</span>
-                  <span className="font-medium">P{subtotal.toFixed(2)}</span>
+                  <span className="font-medium">Subtotal</span>
+                  <span className="font-semibold">P{subtotal.toFixed(2)}</span>
                 </div>
                 <div className="flex justify-between text-gray-700">
-                  <span>Tax({taxPercentage.toFixed(1)}%)</span>
-                  <span className="font-medium">P{tax.toFixed(2)}</span>
+                  <span className="font-medium">
+                    Vat({taxPercentage.toFixed(1)}%)
+                  </span>
+                  <span className="font-semibold">P{tax.toFixed(2)}</span>
                 </div>
                 {discountApplied && (
-                  <div className="flex justify-between text-gray-700 font-semibold">
+                  <div className="flex justify-between text-amber-600 font-bold bg-amber-50 p-2 rounded-lg">
                     <span>Discount (20%)</span>
-                    <span>P{((subtotal + tax) * 0.2).toFixed(2)}</span>
+                    <span>-P{((subtotal + tax) * 0.2).toFixed(2)}</span>
                   </div>
                 )}
-                <div className="flex justify-between font-bold text-lg border-t border-gray-200 pt-3 text-gray-900">
+                <div className="flex justify-between font-bold text-xl border-t-2 border-gray-200 pt-4 text-gray-900">
                   <span>Total</span>
-                  <span>P{total.toFixed(2)}</span>
+                  <span className="text-green-600">P{total.toFixed(2)}</span>
                 </div>
               </div>
 
@@ -836,19 +829,19 @@ Thank you for your order!
               <div className="space-y-4">
                 <div className="grid grid-cols-3 gap-3">
                   <button
-                    className="bg-gray-200 py-3 rounded-lg font-medium hover:bg-gray-300 transition-colors focus:outline-none focus:ring-2 focus:ring-gray-400"
+                    className="bg-gradient-to-br from-gray-100 to-gray-200 py-3.5 rounded-xl font-bold hover:from-gray-200 hover:to-gray-300 transition-all shadow-md hover:shadow-lg"
                     onClick={() => setPaymentAmount("100")}
                   >
                     P100
                   </button>
                   <button
-                    className="bg-gray-200 py-3 rounded-lg font-medium hover:bg-gray-300 transition-colors focus:outline-none focus:ring-2 focus:ring-gray-400"
+                    className="bg-gradient-to-br from-gray-100 to-gray-200 py-3.5 rounded-xl font-bold hover:from-gray-200 hover:to-gray-300 transition-all shadow-md hover:shadow-lg"
                     onClick={() => setPaymentAmount("500")}
                   >
                     P500
                   </button>
                   <button
-                    className="bg-gray-200 py-3 rounded-lg font-medium hover:bg-gray-300 transition-colors focus:outline-none focus:ring-2 focus:ring-gray-400"
+                    className="bg-gradient-to-br from-gray-100 to-gray-200 py-3.5 rounded-xl font-bold hover:from-gray-200 hover:to-gray-300 transition-all shadow-md hover:shadow-lg"
                     onClick={() => setPaymentAmount("1000")}
                   >
                     P1000
@@ -856,12 +849,12 @@ Thank you for your order!
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Enter amount
+                  <label className="block text-sm font-bold text-gray-700 mb-2">
+                    Enter Payment Amount
                   </label>
                   <input
                     type="number"
-                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                    className="w-full px-5 py-4 border-2 border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent text-lg font-semibold transition-all"
                     value={paymentAmount}
                     onChange={(e) => setPaymentAmount(e.target.value)}
                     placeholder="0.00"
@@ -869,7 +862,7 @@ Thank you for your order!
                 </div>
 
                 <button
-                  className="w-full bg-green-600 text-white py-4 rounded-lg font-semibold text-lg hover:bg-green-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2"
+                  className="w-full bg-gradient-to-r from-green-600 to-emerald-600 text-white py-5 rounded-xl font-bold text-lg hover:from-green-700 hover:to-emerald-700 transition-all disabled:from-gray-300 disabled:to-gray-400 disabled:cursor-not-allowed shadow-xl hover:shadow-2xl"
                   onClick={handlePayment}
                   disabled={cart.length === 0}
                 >
@@ -883,16 +876,16 @@ Thank you for your order!
 
       {/* --- Receipt Modal --- */}
       {showReceiptModal && (
-        <div className="fixed inset-0 flex items-center justify-center z-50">
-          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full mx-4">
-            <div className="p-4 bg-green-600 text-white rounded-t-2xl flex justify-between items-center">
-              <h3 className="text-xl font-bold">Receipt</h3>
+        <div className="fixed inset-0 bg-black bg-opacity-60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-3xl shadow-2xl max-w-md w-full animate-fadeIn">
+            <div className="p-5 bg-gradient-to-r from-green-600 to-emerald-600 text-white rounded-t-3xl flex justify-between items-center">
+              <h3 className="text-2xl font-bold">Receipt</h3>
               <button
                 onClick={() => {
                   setShowReceiptModal(false);
-                  clearCart(); // Clear cart only when closing receipt
+                  clearCart();
                 }}
-                className="text-white hover:text-gray-200 text-2xl"
+                className="text-white hover:bg-white hover:bg-opacity-20 rounded-full w-10 h-10 flex items-center justify-center transition-all text-3xl font-bold"
               >
                 ×
               </button>
@@ -900,7 +893,7 @@ Thank you for your order!
             <div className="p-6 max-h-96 overflow-y-auto">
               <pre
                 ref={receiptRef}
-                className="whitespace-pre-wrap font-mono text-sm text-gray-800 text-center"
+                className="whitespace-pre-wrap font-mono text-sm text-gray-800 text-center leading-relaxed"
                 style={{
                   fontFamily: "'Courier New', monospace",
                   textAlign: "center",
@@ -909,25 +902,25 @@ Thank you for your order!
                 {receiptContent}
               </pre>
             </div>
-            <div className="p-4 flex space-x-3">
+            <div className="p-5 flex gap-3 border-t-2 border-gray-100">
               <button
                 onClick={handlePrintReceipt}
-                className="flex-1 bg-green-600 text-white py-2 rounded-lg font-medium hover:bg-green-700"
+                className="flex-1 bg-gradient-to-r from-green-600 to-emerald-600 text-white py-3 rounded-xl font-semibold hover:from-green-700 hover:to-emerald-700 transition-all shadow-lg hover:shadow-xl"
               >
                 Print
               </button>
               <button
                 onClick={handleSaveReceiptAsImage}
-                className="flex-1 bg-blue-600 text-white py-2 rounded-lg font-medium hover:bg-blue-700"
+                className="flex-1 bg-gradient-to-r from-blue-600 to-blue-700 text-white py-3 rounded-xl font-semibold hover:from-blue-700 hover:to-blue-800 transition-all shadow-lg hover:shadow-xl"
               >
-                Save as PNG
+                Save PNG
               </button>
               <button
                 onClick={() => {
                   setShowReceiptModal(false);
-                  clearCart(); // Clear cart only when closing receipt
+                  clearCart();
                 }}
-                className="flex-1 bg-gray-500 text-white py-2 rounded-lg font-medium hover:bg-gray-600"
+                className="flex-1 bg-gradient-to-r from-gray-500 to-gray-600 text-white py-3 rounded-xl font-semibold hover:from-gray-600 hover:to-gray-700 transition-all shadow-lg hover:shadow-xl"
               >
                 Close
               </button>
@@ -938,11 +931,13 @@ Thank you for your order!
 
       {/* --- Payment Modal --- */}
       {showPaymentModal && paymentResult && (
-        <div className="fixed inset-0 flex items-center justify-center z-50">
-          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full mx-4">
+        <div className="fixed inset-0 bg-black bg-opacity-60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-3xl shadow-2xl max-w-md w-full animate-fadeIn">
             <div
-              className={`p-6 rounded-t-2xl ${
-                paymentResult.type === "success" ? "bg-green-500" : "bg-red-500"
+              className={`p-6 rounded-t-3xl ${
+                paymentResult.type === "success"
+                  ? "bg-gradient-to-r from-green-500 to-emerald-500"
+                  : "bg-gradient-to-r from-red-500 to-red-600"
               }`}
             >
               <div className="flex items-center justify-between">
@@ -952,9 +947,8 @@ Thank you for your order!
                 <button
                   onClick={() => {
                     setShowPaymentModal(false);
-                    // Don't clear cart here - wait for receipt
                   }}
-                  className="text-white hover:text-gray-200 text-2xl"
+                  className="text-white hover:bg-white hover:bg-opacity-20 rounded-full w-10 h-10 flex items-center justify-center transition-all text-3xl font-bold"
                 >
                   ×
                 </button>
@@ -964,7 +958,7 @@ Thank you for your order!
             <div className="p-6">
               <div className="text-center mb-6">
                 <div
-                  className={`text-6xl mb-4 ${
+                  className={`text-7xl mb-4 ${
                     paymentResult.type === "success"
                       ? "text-green-500"
                       : "text-red-500"
@@ -972,28 +966,28 @@ Thank you for your order!
                 >
                   {paymentResult.type === "success" ? "✓" : "⚠"}
                 </div>
-                <p className="text-gray-700 text-lg mb-2">
+                <p className="text-gray-700 text-lg font-medium mb-4">
                   {paymentResult.message}
                 </p>
 
                 {paymentResult.type === "success" ? (
-                  <div className="bg-green-50 border border-green-200 rounded-lg p-4 mt-4">
-                    <p className="text-green-800 font-semibold">
-                      Change:{" "}
-                      <span className="text-2xl">
-                        P{changeAmount.toFixed(2)}
-                      </span>
+                  <div className="bg-gradient-to-r from-green-50 to-emerald-50 border-2 border-green-200 rounded-2xl p-5 mt-4">
+                    <p className="text-green-800 font-semibold text-lg mb-1">
+                      Change:
+                    </p>
+                    <p className="text-green-600 font-bold text-4xl">
+                      P{changeAmount.toFixed(2)}
                     </p>
                   </div>
                 ) : (
-                  <div className="bg-red-50 border border-red-200 rounded-lg p-4 mt-4">
-                    <p className="text-red-800 font-semibold">
-                      Total Amount Required:{" "}
-                      <span className="text-2xl">
-                        P{(paymentResult.required || 0).toFixed(2)}
-                      </span>
+                  <div className="bg-gradient-to-r from-red-50 to-red-100 border-2 border-red-200 rounded-2xl p-5 mt-4">
+                    <p className="text-red-800 font-semibold text-lg mb-1">
+                      Total Amount Required:
                     </p>
-                    <p className="text-red-600 text-sm mt-2">
+                    <p className="text-red-600 font-bold text-3xl mb-3">
+                      P{(paymentResult.required || 0).toFixed(2)}
+                    </p>
+                    <p className="text-red-600 text-sm">
                       Please enter at least P
                       {(paymentResult.required || 0).toFixed(2)} to complete the
                       payment.
@@ -1003,11 +997,11 @@ Thank you for your order!
               </div>
 
               {/* Modal Footer */}
-              <div className="flex space-x-3">
+              <div className="flex gap-3">
                 {paymentResult.type === "error" && (
                   <button
                     onClick={() => setShowPaymentModal(false)}
-                    className="flex-1 bg-gray-500 text-white py-3 rounded-lg font-medium hover:bg-gray-600 transition-colors"
+                    className="flex-1 bg-gradient-to-r from-gray-500 to-gray-600 text-white py-3.5 rounded-xl font-semibold hover:from-gray-600 hover:to-gray-700 transition-all shadow-lg hover:shadow-xl"
                   >
                     Cancel
                   </button>
@@ -1021,10 +1015,10 @@ Thank you for your order!
                       setShowPaymentModal(false);
                     }
                   }}
-                  className={`flex-1 py-3 rounded-lg font-medium transition-colors ${
+                  className={`flex-1 py-3.5 rounded-xl font-semibold transition-all shadow-lg hover:shadow-xl ${
                     paymentResult.type === "success"
-                      ? "bg-green-500 text-white hover:bg-green-600"
-                      : "bg-blue-500 text-white hover:bg-blue-600"
+                      ? "bg-gradient-to-r from-green-500 to-emerald-500 text-white hover:from-green-600 hover:to-emerald-600"
+                      : "bg-gradient-to-r from-blue-500 to-blue-600 text-white hover:from-blue-600 hover:to-blue-700"
                   }`}
                 >
                   {paymentResult.type === "success"

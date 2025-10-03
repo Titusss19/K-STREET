@@ -9,6 +9,8 @@ const Sales = ({ user }) => {
   const [exportRange, setExportRange] = useState("all");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage] = useState(10);
 
   // Fetch orders from backend
   useEffect(() => {
@@ -230,18 +232,35 @@ const Sales = ({ user }) => {
     window.print();
   };
 
+  // Pagination logic
+  const indexOfLastItem = currentPage * itemsPerPage;
+  const indexOfFirstItem = indexOfLastItem - itemsPerPage;
+  const currentSales = sales.slice(indexOfFirstItem, indexOfLastItem);
+  const totalPages = Math.ceil(sales.length / itemsPerPage);
+
+  const handleNextPage = () => {
+    if (currentPage < totalPages) {
+      setCurrentPage(currentPage + 1);
+    }
+  };
+
+  const handlePrevPage = () => {
+    if (currentPage > 1) {
+      setCurrentPage(currentPage - 1);
+    }
+  };
+
   return (
-    <div className="p-6 bg-gray-100 min-h-screen">
+    <div className="p-6  min-h-screen">
       <div className="max-w-6xl mx-auto bg-white p-6 rounded-lg shadow">
         <h1 className="text-2xl font-bold mb-4">Sales Report</h1>
 
         {/* Export Options */}
-        <div className="mb-1 p-4 ">
+        <div className="mb-1 p-4">
           <h3 className="font-semibold mb-3 text-green-800">Export Options</h3>
 
           <div className="flex flex-wrap gap-4 items-end">
             <div>
-              
               <select
                 value={exportRange}
                 onChange={(e) => setExportRange(e.target.value)}
@@ -284,63 +303,157 @@ const Sales = ({ user }) => {
               onClick={exportToExcel}
               className="bg-green-600 text-white px-6 py-2 rounded-lg hover:bg-green-700 font-medium"
             >
-          Export to Excel
+              Export to Excel
             </button>
           </div>
         </div>
 
-        {/* Sales Table */}
-        <div className="overflow-x-auto">
-          <table className="min-w-full border border-gray-200 rounded-lg">
-            <thead className="bg-green-600 text-white">
-              <tr>
-                <th className="px-4 py-2 text-left">#</th>
-                <th className="px-4 py-2 text-left">Date</th>
-                <th className="px-4 py-2 text-left">Total</th>
-                <th className="px-4 py-2 text-left">Paid</th>
-                <th className="px-4 py-2 text-left">Change</th>
-                <th className="px-4 py-2 text-left">Cashier</th>
-                <th className="px-4 py-2 text-left">Order Type</th>
-                <th className="px-4 py-2">Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sales.map((sale) => (
-                <tr key={sale.id} className="border-b hover:bg-gray-50">
-                  <td className="px-4 py-2">{sale.id}</td>
-                  <td className="px-4 py-2">
-                    {new Date(sale.created_at).toLocaleString()}
-                  </td>
-                  <td className="px-4 py-2">₱{sale.total}</td>
-                  <td className="px-4 py-2">₱{sale.paidAmount}</td>
-                  <td className="px-4 py-2">₱{sale.changeAmount}</td>
-                  <td className="px-4 py-2">{sale.cashier || "Unknown"}</td>
-                  <td className="px-4 py-2">{sale.orderType}</td>
-                  <td className="px-4 py-2 text-center">
-                    <button
-                      onClick={() => setShowReceipt(sale)}
-                      className="bg-green-500 text-white px-3 py-1 rounded hover:bg-green-600"
-                    >
-                      View Receipt
-                    </button>
-                  </td>
+        {/* Modern Sales Table */}
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="bg-gradient-to-r from-green-600 to-emerald-600 text-white">
+                  <th className="px-6 py-4 text-left text-sm font-semibold tracking-wide">
+                    #
+                  </th>
+                  <th className="px-6 py-4 text-left text-sm font-semibold tracking-wide">
+                    Date & Time
+                  </th>
+                  <th className="px-6 py-4 text-right text-sm font-semibold tracking-wide">
+                    Total
+                  </th>
+                  <th className="px-6 py-4 text-right text-sm font-semibold tracking-wide">
+                    Paid
+                  </th>
+                  <th className="px-6 py-4 text-right text-sm font-semibold tracking-wide">
+                    Change
+                  </th>
+                  <th className="px-6 py-4 text-left text-sm font-semibold tracking-wide">
+                    Cashier
+                  </th>
+                  <th className="px-6 py-4 text-center text-sm font-semibold tracking-wide">
+                    Order Type
+                  </th>
+                  <th className="px-6 py-4 text-center text-sm font-semibold tracking-wide">
+                    Action
+                  </th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {currentSales.map((sale, index) => (
+                  <tr
+                    key={sale.id}
+                    className="hover:bg-gradient-to-r hover:from-green-50 hover:to-emerald-50 transition-colors duration-150"
+                  >
+                    <td className="px-6 py-4 text-sm font-medium text-gray-900">
+                      #{sale.id}
+                    </td>
+                    <td className="px-6 py-4 text-sm text-gray-600">
+                      {new Date(sale.created_at).toLocaleString("en-PH", {
+                        month: "short",
+                        day: "numeric",
+                        year: "numeric",
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                    </td>
+                    <td className="px-6 py-4 text-sm font-semibold text-gray-900 text-right">
+                      ₱{parseFloat(sale.total).toFixed(2)}
+                    </td>
+                    <td className="px-6 py-4 text-sm text-gray-600 text-right">
+                      ₱{parseFloat(sale.paidAmount).toFixed(2)}
+                    </td>
+                    <td className="px-6 py-4 text-sm text-gray-600 text-right">
+                      ₱{parseFloat(sale.changeAmount).toFixed(2)}
+                    </td>
+                    <td className="px-6 py-4 text-sm text-gray-700">
+                      {sale.cashier || "Unknown"}
+                    </td>
+                    <td className="px-6 py-4 text-center">
+                      <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                        {sale.orderType}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 text-center">
+                      <button
+                        onClick={() => setShowReceipt(sale)}
+                        className="bg-gradient-to-r from-green-500 to-emerald-500 text-white px-4 py-2 rounded-lg hover:from-green-600 hover:to-emerald-600 transition-all duration-200 text-sm font-medium shadow-sm hover:shadow-md"
+                      >
+                        View Receipt
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Empty State */}
+          {sales.length === 0 && (
+            <div className="text-center py-12">
+              <p className="text-gray-500 font-medium">
+                No sales data available
+              </p>
+              <p className="text-gray-400 text-sm mt-1">
+                Sales will appear here once transactions are made
+              </p>
+            </div>
+          )}
+
+          {/* Pagination */}
+          {sales.length > 0 && (
+            <div className="bg-gray-50 px-6 py-4 border-t border-gray-200 flex items-center justify-between">
+              <div className="text-sm text-gray-700">
+                Showing{" "}
+                <span className="font-medium">{indexOfFirstItem + 1}</span> to{" "}
+                <span className="font-medium">
+                  {Math.min(indexOfLastItem, sales.length)}
+                </span>{" "}
+                of <span className="font-medium">{sales.length}</span> results
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={handlePrevPage}
+                  disabled={currentPage === 1}
+                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                    currentPage === 1
+                      ? "bg-gray-200 text-gray-400 cursor-not-allowed"
+                      : "bg-white text-gray-700 hover:bg-gray-100 border border-gray-300"
+                  }`}
+                >
+                  Previous
+                </button>
+                <div className="flex items-center px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm font-medium text-gray-700">
+                  Page {currentPage} of {totalPages}
+                </div>
+                <button
+                  onClick={handleNextPage}
+                  disabled={currentPage === totalPages}
+                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                    currentPage === totalPages
+                      ? "bg-gray-200 text-gray-400 cursor-not-allowed"
+                      : "bg-gradient-to-r from-green-500 to-emerald-500 text-white hover:from-green-600 hover:to-emerald-600"
+                  }`}
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
       {/* Thermal Receipt Modal */}
       {showReceipt && (
-        <div className="fixed inset-0 flex items-center justify-center  print:bg-white">
-          <div className="bg-white rounded-lg shadow-2xl max-w-md w-full print:shadow-none print:max-w-full">
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 print:bg-white">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full print:shadow-none print:max-w-full">
             {/* Modal Header - Hidden on Print */}
-            <div className="flex justify-between items-center bg-green-600 text-white p-4 rounded-t-lg print:hidden">
+            <div className="flex justify-between items-center bg-gradient-to-r from-green-600 to-emerald-600 text-white p-5 rounded-t-2xl print:hidden">
               <h3 className="text-lg font-bold">Receipt Preview</h3>
               <button
                 onClick={() => setShowReceipt(null)}
-                className="text-2xl hover:text-gray-200 font-bold"
+                className="text-2xl hover:bg-white hover:bg-opacity-20 rounded-lg w-8 h-8 flex items-center justify-center transition-all"
               >
                 ×
               </button>
@@ -454,11 +567,10 @@ const Sales = ({ user }) => {
             </div>
 
             {/* Action Buttons - Hidden on Print */}
-            <div className="p-4 flex justify-end space-x-2 print:hidden border-t">
-             
+            <div className="p-5 flex justify-end gap-3 print:hidden border-t border-gray-100">
               <button
                 onClick={() => setShowReceipt(null)}
-                className="bg-gray-500 text-white px-6 py-2 rounded-lg hover:bg-gray-600 font-medium"
+                className="bg-gray-100 text-gray-700 px-6 py-2.5 rounded-lg hover:bg-gray-200 font-medium transition-all duration-200"
               >
                 Close
               </button>
