@@ -47,6 +47,65 @@ const Sales = ({ user }) => {
     return sales;
   };
 
+  // Format product names for display
+  const formatProductNames = (sale) => {
+    if (sale.productNames && sale.productNames !== "No items") {
+      return sale.productNames;
+    }
+
+    // Fallback: if items JSON exists, extract names from there
+    if (sale.items && sale.items !== "[]") {
+      try {
+        const items = JSON.parse(sale.items);
+        if (Array.isArray(items) && items.length > 0) {
+          return items.map((item) => item.name).join(", ");
+        }
+      } catch (error) {
+        console.error("Error parsing items:", error);
+      }
+    }
+
+    return "No product names available";
+  };
+
+  // Get items for receipt display - FIXED FUNCTION
+  const getReceiptItems = (sale) => {
+    // Try to parse items from JSON
+    if (sale.items && sale.items !== "[]") {
+      try {
+        const items = JSON.parse(sale.items);
+        if (Array.isArray(items) && items.length > 0) {
+          return items;
+        }
+      } catch (error) {
+        console.error("Error parsing items for receipt:", error);
+      }
+    }
+
+    // Fallback: create items from productNames
+    if (sale.productNames && sale.productNames !== "No items") {
+      const productNames = sale.productNames.split(", ");
+      return productNames.map((name, index) => ({
+        id: index + 1,
+        name: name,
+        quantity: 1,
+        price: parseFloat(sale.total) / productNames.length,
+        subtotal: parseFloat(sale.total) / productNames.length,
+      }));
+    }
+
+    // Final fallback: single item with total
+    return [
+      {
+        id: 1,
+        name: `Order #${sale.id}`,
+        quantity: 1,
+        price: parseFloat(sale.total),
+        subtotal: parseFloat(sale.total),
+      },
+    ];
+  };
+
   // Export to Excel
   const exportToExcel = async () => {
     const filteredSales = getFilteredSales();
@@ -60,7 +119,7 @@ const Sales = ({ user }) => {
     const worksheet = workbook.addWorksheet("Sales Report");
 
     // Company Header
-    worksheet.mergeCells("A1:G1");
+    worksheet.mergeCells("A1:H1");
     const companyCell = worksheet.getCell("A1");
     companyCell.value = "FOODHUB SALES REPORT";
     companyCell.alignment = { horizontal: "center", vertical: "middle" };
@@ -73,7 +132,7 @@ const Sales = ({ user }) => {
     worksheet.getRow(1).height = 35;
 
     // Date Range Info
-    worksheet.mergeCells("A2:G2");
+    worksheet.mergeCells("A2:H2");
     const dateRangeCell = worksheet.getCell("A2");
     let rangeText = "All Time";
     if (exportRange === "today") {
@@ -129,9 +188,10 @@ const Sales = ({ user }) => {
     // Add spacing
     worksheet.addRow([]);
 
-    // Table Headers
+    // Table Headers - UPDATED: Added Products column
     const headerRow = worksheet.addRow([
       "Order ID",
+      "Products",
       "Total Amount",
       "Amount Paid",
       "Change",
@@ -157,10 +217,11 @@ const Sales = ({ user }) => {
     });
     headerRow.height = 25;
 
-    // Data rows with alternating colors
+    // Data rows with alternating colors - UPDATED: Added Products data
     filteredSales.forEach((sale, index) => {
       const row = worksheet.addRow([
         sale.id,
+        formatProductNames(sale), // NEW: Products column
         parseFloat(sale.total),
         parseFloat(sale.paidAmount),
         parseFloat(sale.changeAmount),
@@ -192,16 +253,25 @@ const Sales = ({ user }) => {
           cell.numFmt = "₱#,##0.00";
           cell.alignment = { horizontal: "right", vertical: "middle" };
         }
+
+        // Wrap text for products column
+        if (colNumber === 2) {
+          cell.alignment = {
+            horizontal: "left",
+            vertical: "middle",
+            wrapText: true,
+          };
+        }
       });
     });
 
-    // Column widths
+    // Column widths - UPDATED: Added width for Products column
     worksheet.getColumn(1).width = 12;
-    worksheet.getColumn(2).width = 22;
+    worksheet.getColumn(2).width = 30; // NEW: Products column width
     worksheet.getColumn(3).width = 15;
     worksheet.getColumn(4).width = 15;
     worksheet.getColumn(5).width = 15;
-    worksheet.getColumn(6).width = 18;
+    worksheet.getColumn(6).width = 15;
     worksheet.getColumn(7).width = 15;
     worksheet.getColumn(8).width = 18;
 
@@ -252,7 +322,7 @@ const Sales = ({ user }) => {
 
   return (
     <div className="p-6  min-h-screen">
-      <div className="max-w-6xl mx-auto bg-white p-6 rounded-lg shadow">
+      <div className="max-w-7xl mx-auto bg-white p-6 rounded-lg shadow">
         <h1 className="text-2xl font-bold mb-4">Sales Report</h1>
 
         {/* Export Options */}
@@ -308,7 +378,7 @@ const Sales = ({ user }) => {
           </div>
         </div>
 
-        {/* Modern Sales Table */}
+        {/* Modern Sales Table - UPDATED: Added Products column */}
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full">
@@ -319,6 +389,9 @@ const Sales = ({ user }) => {
                   </th>
                   <th className="px-6 py-4 text-left text-sm font-semibold tracking-wide">
                     Date & Time
+                  </th>
+                  <th className="px-6 py-4 text-left text-sm font-semibold tracking-wide">
+                    Products
                   </th>
                   <th className="px-6 py-4 text-right text-sm font-semibold tracking-wide">
                     Total
@@ -357,6 +430,14 @@ const Sales = ({ user }) => {
                         hour: "2-digit",
                         minute: "2-digit",
                       })}
+                    </td>
+                    <td className="px-6 py-4 text-sm text-gray-700 max-w-xs">
+                      <div
+                        className="line-clamp-2"
+                        title={formatProductNames(sale)}
+                      >
+                        {formatProductNames(sale)}
+                      </div>
                     </td>
                     <td className="px-6 py-4 text-sm font-semibold text-gray-900 text-right">
                       ₱{parseFloat(sale.total).toFixed(2)}
@@ -444,7 +525,7 @@ const Sales = ({ user }) => {
         </div>
       </div>
 
-      {/* Thermal Receipt Modal */}
+      {/* Thermal Receipt Modal - FIXED */}
       {showReceipt && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 print:bg-white">
           <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full print:shadow-none print:max-w-full">
@@ -459,7 +540,7 @@ const Sales = ({ user }) => {
               </button>
             </div>
 
-            {/* Receipt Content */}
+            {/* Receipt Content - FIXED */}
             <div className="p-8 font-mono text-sm bg-white print:p-0">
               {/* Header */}
               <div className="text-center mb-4">
@@ -485,32 +566,28 @@ const Sales = ({ user }) => {
                 </div>
               </div>
 
-              {/* Items */}
+              {/* Items - FIXED: Using getReceiptItems function */}
               <div className="mb-4">
                 <h2 className="font-bold text-base mb-2">ITEMS:</h2>
                 <div className="space-y-2">
-                  {showReceipt.items && showReceipt.items.length > 0 ? (
-                    showReceipt.items.map((item, index) => (
-                      <div key={index}>
-                        <div className="flex justify-between">
-                          <span>
-                            {item.name} x{item.quantity}
-                          </span>
-                          <span>
-                            P{(item.price * item.quantity).toFixed(2)}
-                          </span>
-                        </div>
-                        {index < showReceipt.items.length - 1 && (
-                          <div className="border-b border-dashed border-gray-400 my-1"></div>
-                        )}
+                  {getReceiptItems(showReceipt).map((item, index) => (
+                    <div key={item.id || index}>
+                      <div className="flex justify-between">
+                        <span>
+                          {item.name} x{item.quantity}
+                        </span>
+                        <span>
+                          P
+                          {((item.price || 0) * (item.quantity || 1)).toFixed(
+                            2
+                          )}
+                        </span>
                       </div>
-                    ))
-                  ) : (
-                    <div className="flex justify-between">
-                      <span>Order #{showReceipt.id}</span>
-                      <span>P{parseFloat(showReceipt.total).toFixed(2)}</span>
+                      {index < getReceiptItems(showReceipt).length - 1 && (
+                        <div className="border-b border-dashed border-gray-400 my-1"></div>
+                      )}
                     </div>
-                  )}
+                  ))}
                 </div>
               </div>
 
@@ -521,19 +598,13 @@ const Sales = ({ user }) => {
                 <div className="flex justify-between">
                   <span>Subtotal:</span>
                   <span>
-                    P
-                    {showReceipt.subtotal
-                      ? showReceipt.subtotal.toFixed(2)
-                      : (parseFloat(showReceipt.total) * 0.893).toFixed(2)}
+                    P{(parseFloat(showReceipt.total) * 0.893).toFixed(2)}
                   </span>
                 </div>
                 <div className="flex justify-between">
-                  <span>Tax:</span>
+                  <span>Tax (12%):</span>
                   <span>
-                    P
-                    {showReceipt.tax
-                      ? showReceipt.tax.toFixed(2)
-                      : (parseFloat(showReceipt.total) * 0.107).toFixed(2)}
+                    P{(parseFloat(showReceipt.total) * 0.107).toFixed(2)}
                   </span>
                 </div>
               </div>
@@ -569,6 +640,12 @@ const Sales = ({ user }) => {
             {/* Action Buttons - Hidden on Print */}
             <div className="p-5 flex justify-end gap-3 print:hidden border-t border-gray-100">
               <button
+                onClick={printReceipt}
+                className="bg-green-600 text-white px-6 py-2.5 rounded-lg hover:bg-green-700 font-medium transition-all duration-200"
+              >
+                Print Receipt
+              </button>
+              <button
                 onClick={() => setShowReceipt(null)}
                 className="bg-gray-100 text-gray-700 px-6 py-2.5 rounded-lg hover:bg-gray-200 font-medium transition-all duration-200"
               >
@@ -591,6 +668,12 @@ const Sales = ({ user }) => {
             position: static;
             background: white;
           }
+        }
+        .line-clamp-2 {
+          display: -webkit-box;
+          -webkit-line-clamp: 2;
+          -webkit-box-orient: vertical;
+          overflow: hidden;
         }
       `}</style>
     </div>

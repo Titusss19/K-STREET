@@ -169,7 +169,7 @@ const FoodHubPOS = () => {
   const total = calculateTotal();
   const taxPercentage = subtotal > 0 ? (tax / subtotal) * 100 : 0;
 
-  // --- Payment ---
+  /// --- Payment ---
   const handlePayment = async () => {
     const amount = parseFloat(paymentAmount);
 
@@ -244,6 +244,18 @@ Thank you for your order!
     }
 
     try {
+      // FIXED: Prepare order data with product names
+      const productNames = cart.map((item) => item.name).join(", ");
+      const itemsData = JSON.stringify(
+        cart.map((item) => ({
+          id: item.id,
+          name: item.name,
+          quantity: item.quantity,
+          price: item.price,
+          subtotal: (Number(item.price) || 0) * item.quantity,
+        }))
+      );
+
       const res = await axios.post("http://localhost:3002/orders", {
         userId,
         paidAmount: amount,
@@ -251,6 +263,8 @@ Thank you for your order!
         discountApplied,
         changeAmount: change,
         orderType,
+        productNames: productNames, // Dito papasok sa db
+        items: itemsData, // Dito papasok sa db
       });
 
       console.log("Backend response:", res.data);
@@ -273,7 +287,7 @@ Thank you for your order!
       setShowPaymentModal(true);
     }
   };
-
+  
   // --- Apply Discount ---
   const applyDiscount = () => {
     if (!discountApplied) setDiscountApplied(true);
@@ -726,7 +740,7 @@ Thank you for your order!
                 className={`w-full py-3.5 rounded-xl font-semibold text-white transition-all shadow-lg ${
                   discountApplied
                     ? "bg-gray-300 cursor-not-allowed"
-                    : "bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 hover:shadow-xl"
+                    : "bg-green-500 hover:shadow-xl"
                 }`}
                 onClick={applyDiscount}
                 disabled={discountApplied}

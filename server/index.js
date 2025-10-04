@@ -329,7 +329,7 @@ app.delete("/items/:id", (req, res) => {
 
 // ------------------ ORDERS ------------------
 
-// Save order
+// Save order - FIXED VERSION
 app.post("/orders", (req, res) => {
   const {
     userId,
@@ -338,6 +338,8 @@ app.post("/orders", (req, res) => {
     discountApplied,
     changeAmount,
     orderType,
+    productNames,
+    items
   } = req.body;
 
   console.log("Received order data:", req.body);
@@ -349,20 +351,23 @@ app.post("/orders", (req, res) => {
     });
   }
 
+  // FIXED: Ensure we have default values
   const query = `
-    INSERT INTO orders (userId, paidAmount, total, discountApplied, changeAmount, orderType)
-    VALUES (?, ?, ?, ?, ?, ?)
+    INSERT INTO orders (userId, paidAmount, total, discountApplied, changeAmount, orderType, productNames, items)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `;
 
   db.query(
     query,
     [
       userId,
-      paidAmount,
+      paidAmount || 0,
       total || 0,
       discountApplied ? 1 : 0,
       changeAmount || 0,
       orderType || "Dine In",
+      productNames || "No items", // Default value if null
+      items || "[]" // Default value if null
     ],
     (err, result) => {
       if (err) {
@@ -375,24 +380,6 @@ app.post("/orders", (req, res) => {
       });
     }
   );
-});
-
-// Get all orders
-app.get("/orders", (req, res) => {
-  const query = `
-    SELECT o.*, u.email AS cashier 
-    FROM orders o
-    LEFT JOIN users u ON o.userId = u.id
-    ORDER BY o.created_at DESC
-  `;
-
-  db.query(query, (err, results) => {
-    if (err) {
-      console.error("Error fetching orders:", err);
-      return res.status(500).json({ message: "Failed to fetch orders" });
-    }
-    res.json(results);
-  });
 });
 
 // ------------------ STORE HOURS ------------------
