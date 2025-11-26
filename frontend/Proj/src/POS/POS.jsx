@@ -12,6 +12,8 @@ const FoodHubPOS = () => {
 
   const [products, setProducts] = useState([]);
   const [categories, setCategories] = useState([]);
+  const [addons, setAddons] = useState([]);
+  const [upgrades, setUpgrades] = useState([]);
 
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [paymentResult, setPaymentResult] = useState(null);
@@ -21,6 +23,14 @@ const FoodHubPOS = () => {
   const [receiptContent, setReceiptContent] = useState("");
   const [storeOpen, setStoreOpen] = useState(false);
 
+  const [paymentMethod, setPaymentMethod] = useState("Cash");
+
+  const [showAddonsModal, setShowAddonsModal] = useState(false);
+  const [selectedProduct, setSelectedProduct] = useState(null);
+  const [selectedAddons, setSelectedAddons] = useState([]);
+  const [selectedUpgrades, setSelectedUpgrades] = useState([]);
+  const [specialInstructions, setSpecialInstructions] = useState("");
+
   const receiptRef = useRef();
   const [currentTime, setCurrentTime] = useState(new Date());
 
@@ -29,14 +39,51 @@ const FoodHubPOS = () => {
     const timer = setInterval(() => {
       setCurrentTime(new Date());
     }, 1000);
-
     return () => clearInterval(timer);
   }, []);
 
-  // Check current store status on component mount
+  // Fetch all data on component mount
   useEffect(() => {
     checkCurrentStoreStatus();
+    fetchProducts();
+    fetchAddons();
+    fetchUpgrades();
   }, []);
+
+const fetchProducts = async () => {
+  try {
+    // Add query parameter to fetch only k-street food
+    const res = await axios.get(
+      "http://localhost:3002/items?description_type=k-street food"
+    );
+    const productsWithNumberPrice = res.data.map((product) => ({
+      ...product,
+      price: Number(product.price) || 0,
+    }));
+    setProducts(productsWithNumberPrice);
+    setCategories(["All", ...new Set(res.data.map((p) => p.category))]);
+  } catch (err) {
+    console.error("Failed to fetch products:", err);
+  }
+};
+
+  const fetchAddons = async () => {
+    try {
+      const res = await axios.get("http://localhost:3002/addons");
+      setAddons(res.data);
+    } catch (err) {
+      console.error("Failed to fetch addons:", err);
+    }
+  };
+
+  const fetchUpgrades = async () => {
+    try {
+      const res = await axios.get("http://localhost:3002/upgrades");
+      setUpgrades(res.data);
+    } catch (err) {
+      console.error("Failed to fetch upgrades:", err);
+    }
+  };
 
   const checkCurrentStoreStatus = async () => {
     try {
@@ -52,7 +99,6 @@ const FoodHubPOS = () => {
 
   const handleStoreToggle = async () => {
     const user = JSON.parse(localStorage.getItem("user"));
-
     if (!user) {
       alert("Please login first");
       return;
@@ -67,32 +113,12 @@ const FoodHubPOS = () => {
         userEmail: user.email,
         action: action,
       });
-
       setStoreOpen(newStatus);
-      console.log(`Store ${action}ed successfully by ${user.email}`);
     } catch (error) {
       console.error("Error updating store status:", error);
       alert("Failed to update store status");
     }
   };
-
-  // Fetch products from backend
-  useEffect(() => {
-    const fetchProducts = async () => {
-      try {
-        const res = await axios.get("http://localhost:3002/items");
-        const productsWithNumberPrice = res.data.map((product) => ({
-          ...product,
-          price: Number(product.price) || 0,
-        }));
-        setProducts(productsWithNumberPrice);
-        setCategories(["All", ...new Set(res.data.map((p) => p.category))]);
-      } catch (err) {
-        console.error("Failed to fetch products:", err);
-      }
-    };
-    fetchProducts();
-  }, []);
 
   // Filter products
   const filteredProducts = products.filter((product) => {
@@ -106,25 +132,66 @@ const FoodHubPOS = () => {
 
   // --- Cart functions ---
   const addToCart = (product) => {
-    const existingItem = cart.find((item) => item.id === product.id);
-    if (existingItem) {
-      setCart(
-        cart.map((item) =>
-          item.id === product.id
-            ? { ...item, quantity: item.quantity + 1 }
-            : item
-        )
-      );
+    setSelectedProduct(product);
+    setSelectedAddons([]);
+    setSelectedUpgrades([]);
+    setSpecialInstructions("");
+    setShowAddonsModal(true);
+  };
+
+  const confirmAddToCart = () => {
+    if (!selectedProduct) return;
+
+    const cartItem = {
+      ...selectedProduct,
+      quantity: 1,
+      price: Number(selectedProduct.price) || 0,
+      selectedAddons: [...selectedAddons],
+      selectedUpgrades: [...selectedUpgrades],
+      specialInstructions: specialInstructions,
+      finalPrice: calculateFinalPrice(
+        selectedProduct,
+        selectedAddons,
+        selectedUpgrades
+      ),
+    };
+
+    const existingItemIndex = cart.findIndex(
+      (item) =>
+        item.id === cartItem.id &&
+        JSON.stringify(item.selectedAddons) ===
+          JSON.stringify(cartItem.selectedAddons) &&
+        JSON.stringify(item.selectedUpgrades) ===
+          JSON.stringify(cartItem.selectedUpgrades) &&
+        item.specialInstructions === cartItem.specialInstructions
+    );
+
+    if (existingItemIndex !== -1) {
+      const updatedCart = [...cart];
+      updatedCart[existingItemIndex].quantity += 1;
+      setCart(updatedCart);
     } else {
-      setCart([
-        ...cart,
-        {
-          ...product,
-          quantity: 1,
-          price: Number(product.price) || 0,
-        },
-      ]);
+      setCart([...cart, cartItem]);
     }
+
+    setShowAddonsModal(false);
+    setSelectedProduct(null);
+  };
+
+  const calculateFinalPrice = (product, addons, upgrades) => {
+    let finalPrice = Number(product.price) || 0;
+
+    // Add cost for selected addons
+    addons.forEach((addon) => {
+      finalPrice += Number(addon.price) || 0;
+    });
+
+    // Add cost for selected upgrades
+    upgrades.forEach((upgrade) => {
+      finalPrice += Number(upgrade.price) || 0;
+    });
+
+    return finalPrice;
   };
 
   const removeFromCart = (productId) => {
@@ -147,12 +214,14 @@ const FoodHubPOS = () => {
     setCart([]);
     setPaymentAmount("");
     setDiscountApplied(false);
+    setPaymentMethod("Cash");
   };
 
   // --- Totals ---
   const calculateSubtotal = () =>
     cart.reduce(
-      (total, item) => total + (Number(item.price) || 0) * item.quantity,
+      (total, item) =>
+        total + (item.finalPrice || Number(item.price) || 0) * item.quantity,
       0
     );
 
@@ -169,7 +238,7 @@ const FoodHubPOS = () => {
   const total = calculateTotal();
   const taxPercentage = subtotal > 0 ? (tax / subtotal) * 100 : 0;
 
-  /// --- Payment ---
+  // --- Payment ---
   const handlePayment = async () => {
     const amount = parseFloat(paymentAmount);
 
@@ -206,6 +275,7 @@ const FoodHubPOS = () => {
 FOOD HUB RECEIPT
 =============================
 Order Type: ${orderType}
+Payment Method: ${paymentMethod}
 Date: ${new Date().toLocaleString()}
 
 Items:
@@ -213,8 +283,24 @@ ${cart
   .map(
     (item) =>
       `${item.name} x${item.quantity} - P${(
-        (Number(item.price) || 0) * item.quantity
-      ).toFixed(2)}`
+        (item.finalPrice || Number(item.price) || 0) * item.quantity
+      ).toFixed(2)}${
+        item.selectedAddons.length > 0
+          ? `\n  Add-ons: ${item.selectedAddons
+              .map((a) => `${a.name} (+P${a.price})`)
+              .join(", ")}`
+          : ""
+      }${
+        item.selectedUpgrades.length > 0
+          ? `\n  Upgrades: ${item.selectedUpgrades
+              .map((u) => `${u.name} (+P${u.price})`)
+              .join(", ")}`
+          : ""
+      }${
+        item.specialInstructions
+          ? `\n  Instructions: ${item.specialInstructions}`
+          : ""
+      }`
   )
   .join("\n")}
 
@@ -222,6 +308,7 @@ Subtotal: P${currentSubtotal.toFixed(2)}
 Tax: P${currentTax.toFixed(2)}
 ${discountApplied ? "Discount (20%): Applied\n" : ""}
 Total: P${currentTotal.toFixed(2)}
+Payment Method: ${paymentMethod}
 Amount Paid: P${amount.toFixed(2)}
 Change: P${change.toFixed(2)}
 
@@ -244,35 +331,41 @@ Thank you for your order!
     }
 
     try {
-      // FIXED: Prepare order data with product names
       const productNames = cart.map((item) => item.name).join(", ");
       const itemsData = JSON.stringify(
         cart.map((item) => ({
           id: item.id,
           name: item.name,
           quantity: item.quantity,
-          price: item.price,
-          subtotal: (Number(item.price) || 0) * item.quantity,
+          price: item.finalPrice || item.price,
+          subtotal:
+            (item.finalPrice || Number(item.price) || 0) * item.quantity,
+          selectedAddons: item.selectedAddons,
+          selectedUpgrades: item.selectedUpgrades,
+          specialInstructions: item.specialInstructions,
         }))
       );
 
-      const res = await axios.post("http://localhost:3002/orders", {
+      const orderData = {
         userId,
         paidAmount: amount,
         total: currentTotal,
         discountApplied,
         changeAmount: change,
         orderType,
-        productNames: productNames, // Dito papasok sa db
-        items: itemsData, // Dito papasok sa db
-      });
+        productNames: productNames,
+        items: itemsData,
+        paymentMethod: paymentMethod,
+      };
 
-      console.log("Backend response:", res.data);
+      const res = await axios.post("http://localhost:3002/orders", orderData);
 
       setPaymentResult({
         type: "success",
         title: "Payment Successful!",
-        message: `Payment of P${amount.toFixed(2)} received.`,
+        message: `Payment of P${amount.toFixed(
+          2
+        )} received via ${paymentMethod}.`,
         change: change,
       });
 
@@ -287,7 +380,7 @@ Thank you for your order!
       setShowPaymentModal(true);
     }
   };
-  
+
   // --- Apply Discount ---
   const applyDiscount = () => {
     if (!discountApplied) setDiscountApplied(true);
@@ -355,6 +448,11 @@ Thank you for your order!
           margin: 3px 0;
           font-size: 13px;
         }
+        .item-details {
+          font-size: 11px;
+          color: #666;
+          margin-left: 10px;
+        }
         .divider {
           border-top: 1px dashed #000;
           margin: 10px 0;
@@ -390,6 +488,7 @@ Thank you for your order!
         <div class="receipt-header">FOOD HUB RECEIPT</div>
         <div class="receipt-content">
           <div class="receipt-line">Order Type: ${orderType}</div>
+          <div class="receipt-line">Payment Method: ${paymentMethod}</div>
           <div class="receipt-line">Date: ${new Date().toLocaleString()}</div>
           <div class="divider"></div>
           <div class="receipt-line" style="font-weight: bold; text-align: left;">ITEMS:</div>
@@ -400,9 +499,31 @@ Thank you for your order!
                     .map(
                       (item) => `
                   <div class="item-line">
-                    <span>${item.name} x${item.quantity}</span>
+                    <div style="flex: 1;">
+                      <div>${item.name} x${item.quantity}</div>
+                      ${
+                        item.selectedAddons.length > 0
+                          ? `<div class="item-details">Add-ons: ${item.selectedAddons
+                              .map((a) => `${a.name} (+P${a.price})`)
+                              .join(", ")}</div>`
+                          : ""
+                      }
+                      ${
+                        item.selectedUpgrades.length > 0
+                          ? `<div class="item-details">Upgrades: ${item.selectedUpgrades
+                              .map((u) => `${u.name} (+P${u.price})`)
+                              .join(", ")}</div>`
+                          : ""
+                      }
+                      ${
+                        item.specialInstructions
+                          ? `<div class="item-details">Instructions: ${item.specialInstructions}</div>`
+                          : ""
+                      }
+                    </div>
                     <span>P${(
-                      (Number(item.price) || 0) * item.quantity
+                      (item.finalPrice || Number(item.price) || 0) *
+                      item.quantity
                     ).toFixed(2)}</span>
                   </div>
                 `
@@ -433,6 +554,10 @@ Thank you for your order!
           <div class="total-line">
             <span>Total:</span>
             <span>P${currentTotal.toFixed(2)}</span>
+          </div>
+          <div class="summary-line">
+            <span>Payment Method:</span>
+            <span>${paymentMethod}</span>
           </div>
           <div class="summary-line">
             <span>Amount Paid:</span>
@@ -496,6 +621,7 @@ Thank you for your order!
       </div>
       <div style="text-align: center; width: 100%;">
         <div style="margin-bottom: 3px;">Order Type: ${orderType}</div>
+        <div style="margin-bottom: 3px;">Payment Method: ${paymentMethod}</div>
         <div style="margin-bottom: 15px;">Date: ${new Date().toLocaleString()}</div>
         <div style="border-top: 1px dashed #000; margin: 12px 0; width: 100%;"></div>
         <div style="font-weight: bold; text-align: left; margin-bottom: 8px;">ITEMS:</div>
@@ -505,11 +631,33 @@ Thank you for your order!
               ? cart
                   .map(
                     (item) => `
-                <div style="display: flex; justify-content: space-between; margin: 4px 0;">
-                  <span>${item.name} x${item.quantity}</span>
-                  <span>P${((Number(item.price) || 0) * item.quantity).toFixed(
-                    2
-                  )}</span>
+                <div style="margin: 8px 0;">
+                  <div style="display: flex; justify-content: space-between;">
+                    <span>${item.name} x${item.quantity}</span>
+                    <span>P${(
+                      (item.finalPrice || Number(item.price) || 0) *
+                      item.quantity
+                    ).toFixed(2)}</span>
+                  </div>
+                  ${
+                    item.selectedAddons.length > 0
+                      ? `<div style="font-size: 11px; color: #666; margin-left: 10px;">Add-ons: ${item.selectedAddons
+                          .map((a) => `${a.name} (+P${a.price})`)
+                          .join(", ")}</div>`
+                      : ""
+                  }
+                  ${
+                    item.selectedUpgrades.length > 0
+                      ? `<div style="font-size: 11px; color: #666; margin-left: 10px;">Upgrades: ${item.selectedUpgrades
+                          .map((u) => `${u.name} (+P${u.price})`)
+                          .join(", ")}</div>`
+                      : ""
+                  }
+                  ${
+                    item.specialInstructions
+                      ? `<div style="font-size: 11px; color: #666; margin-left: 10px;">Instructions: ${item.specialInstructions}</div>`
+                      : ""
+                  }
                 </div>
               `
                   )
@@ -539,6 +687,10 @@ Thank you for your order!
         <div style="display: flex; justify-content: space-between; margin: 8px 0; font-weight: bold; font-size: 16px; border-top: 1px dashed #000; padding-top: 8px;">
           <span>Total:</span>
           <span>P${currentTotal.toFixed(2)}</span>
+        </div>
+        <div style="display: flex; justify-content: space-between; margin: 5px 0;">
+          <span>Payment Method:</span>
+          <span>${paymentMethod}</span>
         </div>
         <div style="display: flex; justify-content: space-between; margin: 5px 0;">
           <span>Amount Paid:</span>
@@ -576,11 +728,64 @@ Thank you for your order!
     });
   };
 
+  // Handle addon selection
+  const handleAddonToggle = (addon) => {
+    if (selectedAddons.find((a) => a.id === addon.id)) {
+      setSelectedAddons(selectedAddons.filter((a) => a.id !== addon.id));
+    } else {
+      setSelectedAddons([...selectedAddons, addon]);
+    }
+  };
+
+  // Handle upgrade selection
+  const handleUpgradeToggle = (upgrade) => {
+    if (selectedUpgrades.find((u) => u.id === upgrade.id)) {
+      setSelectedUpgrades(selectedUpgrades.filter((u) => u.id !== upgrade.id));
+    } else {
+      setSelectedUpgrades([...selectedUpgrades, upgrade]);
+    }
+  };
+
+  // Calculate total addons price
+  const calculateAddonsTotal = () => {
+    return selectedAddons.reduce(
+      (total, addon) => total + Number(addon.price),
+      0
+    );
+  };
+
+  // Calculate total upgrades price
+  const calculateUpgradesTotal = () => {
+    return selectedUpgrades.reduce(
+      (total, upgrade) => total + Number(upgrade.price),
+      0
+    );
+  };
+
+  // Filter addons and upgrades by product category
+  const getFilteredAddons = () => {
+    if (!selectedProduct) return [];
+    return addons.filter(
+      (addon) =>
+        addon.category === selectedProduct.category ||
+        addon.category === "General"
+    );
+  };
+
+  const getFilteredUpgrades = () => {
+    if (!selectedProduct) return [];
+    return upgrades.filter(
+      (upgrade) =>
+        upgrade.category === selectedProduct.category ||
+        upgrade.category === "General"
+    );
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 p-4">
       <div className="max-w-7xl mx-auto bg-white rounded-2xl shadow-xl overflow-hidden">
         {/* Modern Header */}
-        <div className="bg-gradient-to-r from-green-600 to-emerald-600 text-white p-6">
+        <div className="bg-gradient-to-r from-red-600 to-red-500 text-white p-6">
           <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
             <div className="flex-1">
               <h1 className="text-3xl font-bold tracking-tight">
@@ -605,15 +810,15 @@ Thank you for your order!
                 <button
                   className={`px-4 py-1.5 rounded-full text-sm font-semibold transition-all shadow-lg ${
                     storeOpen
-                      ? "bg-white text-green-600 hover:bg-green-50"
-                      : "bg-red-500 hover:bg-red-600 text-white"
+                      ? "bg-white text-black hover:bg-green-50"
+                      : "bg-black hover:bg-black text-white"
                   }`}
                   onClick={handleStoreToggle}
                 >
                   {storeOpen ? "OPEN" : "CLOSED"}
                 </button>
                 <span className="text-green-100 text-sm">
-                  {storeOpen ? "9:00 AM - 10:00 PM" : "Store Closed"}
+                  {storeOpen ? "" : "Store Closed"}
                 </span>
               </div>
             </div>
@@ -621,8 +826,8 @@ Thank you for your order!
               <button
                 className={`px-8 py-3 rounded-xl font-semibold transition-all shadow-lg ${
                   orderType === "Dine In"
-                    ? "bg-white text-green-600 shadow-xl scale-105"
-                    : "bg-green bg-opacity-20 hover:bg-opacity-30 text-white"
+                    ? "bg-black text-white shadow-xl scale-105"
+                    : "bg-white  text-black"
                 }`}
                 onClick={() => setOrderType("Dine In")}
               >
@@ -631,8 +836,8 @@ Thank you for your order!
               <button
                 className={`px-8 py-3 rounded-xl font-semibold transition-all shadow-lg ${
                   orderType === "Take-Out"
-                    ? "bg-white text-green-600 shadow-xl scale-105"
-                    : "bg-green bg-opacity-20 hover:bg-opacity-30 text-white"
+                    ? "bg-black text-white shadow-xl scale-105"
+                    : "bg-white  text-black"
                 }`}
                 onClick={() => setOrderType("Take-Out")}
               >
@@ -655,7 +860,7 @@ Thank you for your order!
                 <input
                   type="text"
                   placeholder="Search products..."
-                  className="w-full px-5 py-3 border-2 border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all"
+                  className="w-full px-5 py-3 border-2 border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent transition-all"
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                 />
@@ -666,7 +871,7 @@ Thank you for your order!
                     key={category}
                     className={`px-5 py-3 rounded-xl font-semibold whitespace-nowrap transition-all shadow-sm ${
                       activeCategory === category
-                        ? "bg-gradient-to-r from-green-600 to-emerald-600 text-white shadow-lg scale-105"
+                        ? "bg-red-600 text-white shadow-lg scale-105"
                         : "bg-gray-100 text-gray-700 hover:bg-gray-200"
                     }`}
                     onClick={() => setActiveCategory(category)}
@@ -682,7 +887,7 @@ Thank you for your order!
               {filteredProducts.map((product) => (
                 <div
                   key={product.id}
-                  className="group border-2 border-gray-100 rounded-2xl p-4 hover:shadow-2xl hover:border-green-200 transition-all duration-300 hover:scale-105"
+                  className="group border-2 border-gray-100 rounded-2xl p-4 hover:shadow-2xl hover:border-red-200 transition-all duration-300 hover:scale-105"
                 >
                   {/* Product Image */}
                   <div className="h-40 rounded-xl mb-3 overflow-hidden flex items-center justify-center bg-gradient-to-br from-gray-50 to-gray-100">
@@ -701,15 +906,15 @@ Thank you for your order!
                   <h3 className="font-bold text-lg text-gray-800 mb-1">
                     {product.name}
                   </h3>
-                  <span className="inline-block px-3 py-1 bg-green-100 text-green-700 text-xs font-semibold rounded-full mb-3">
+                  <span className="inline-block px-3 py-1 bg-red-100 text-black-700 text-xs font-semibold rounded-full mb-3">
                     {product.category}
                   </span>
                   <div className="flex justify-between items-center">
-                    <span className="text-green-600 font-bold text-xl">
+                    <span className="text-red-600 font-bold text-xl">
                       P{((Number(product.price) || 0) * 1.12).toFixed(2)}
                     </span>
                     <button
-                      className="bg-gradient-to-r from-green-600 to-emerald-600 text-white px-5 py-2.5 rounded-xl font-semibold hover:from-green-700 hover:to-emerald-700 transition-all shadow-lg hover:shadow-xl"
+                      className="bg-gradient-to-r from-red-600 to-red-600 text-white px-5 py-2.5 rounded-xl font-semibold hover:from-black hover:to-black transition-all shadow-lg hover:shadow-xl"
                       onClick={() => addToCart(product)}
                     >
                       Add
@@ -740,7 +945,7 @@ Thank you for your order!
                 className={`w-full py-3.5 rounded-xl font-semibold text-white transition-all shadow-lg ${
                   discountApplied
                     ? "bg-gray-300 cursor-not-allowed"
-                    : "bg-green-500 hover:shadow-xl"
+                    : "bg-black hover:shadow-xl"
                 }`}
                 onClick={applyDiscount}
                 disabled={discountApplied}
@@ -763,22 +968,47 @@ Thank you for your order!
                 </div>
               ) : (
                 <div className="p-4 space-y-4">
-                  {cart.map((item) => (
+                  {cart.map((item, index) => (
                     <div
-                      key={item.id}
-                      className="flex justify-between items-center border-b border-gray-100 pb-4 last:border-b-0 hover:bg-green-50 p-3 rounded-xl transition-all"
+                      key={index}
+                      className="flex justify-between items-center border-b border-gray-100 pb-4 last:border-b-0 hover:bg-red-50 p-3 rounded-xl transition-all"
                     >
                       <div className="flex-1">
                         <p className="font-bold text-gray-800">{item.name}</p>
                         <p className="text-sm text-gray-600 mt-0.5">
-                          P{(Number(item.price) || 0).toFixed(2)} ×{" "}
-                          {item.quantity}
-                        </p>
-                        <p className="text-green-600 font-bold mt-1">
                           P
-                          {((Number(item.price) || 0) * item.quantity).toFixed(
+                          {(item.finalPrice || Number(item.price) || 0).toFixed(
                             2
-                          )}
+                          )}{" "}
+                          × {item.quantity}
+                        </p>
+                        {item.selectedAddons.length > 0 && (
+                          <p className="text-xs text-gray-500 mt-1">
+                            Add-ons:{" "}
+                            {item.selectedAddons
+                              .map((a) => `${a.name} (+P${a.price})`)
+                              .join(", ")}
+                          </p>
+                        )}
+                        {item.selectedUpgrades.length > 0 && (
+                          <p className="text-xs text-gray-500">
+                            Upgrades:{" "}
+                            {item.selectedUpgrades
+                              .map((u) => `${u.name} (+P${u.price})`)
+                              .join(", ")}
+                          </p>
+                        )}
+                        {item.specialInstructions && (
+                          <p className="text-xs text-gray-500">
+                            Note: {item.specialInstructions}
+                          </p>
+                        )}
+                        <p className="text-red-600 font-bold mt-1">
+                          P
+                          {(
+                            (item.finalPrice || Number(item.price) || 0) *
+                            item.quantity
+                          ).toFixed(2)}
                         </p>
                       </div>
                       <div className="flex items-center gap-2">
@@ -835,27 +1065,79 @@ Thank you for your order!
                 )}
                 <div className="flex justify-between font-bold text-xl border-t-2 border-gray-200 pt-4 text-gray-900">
                   <span>Total</span>
-                  <span className="text-green-600">P{total.toFixed(2)}</span>
+                  <span className="text-red-600">P{total.toFixed(2)}</span>
+                </div>
+              </div>
+
+              {/* Payment Method Selection */}
+              <h1 className="text-black font-bold text-lg mb-2">
+                Payment Method
+              </h1>
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-3 mb-5">
+                  <button
+                    className={`py-3.5 rounded-xl font-bold transition-all shadow-md hover:shadow-lg ${
+                      paymentMethod === "Cash"
+                        ? "bg-black text-white"
+                        : "bg-gray-200 text-gray-700 hover:bg-gray-300"
+                    }`}
+                    onClick={() => setPaymentMethod("Cash")}
+                  >
+                    <span className="font-bold">Cash</span>
+                  </button>
+                  <button
+                    className={`py-3.5 rounded-xl font-bold transition-all shadow-md hover:shadow-lg ${
+                      paymentMethod === "Gcash"
+                        ? "bg-black text-white"
+                        : "bg-gray-200 text-gray-700 hover:bg-gray-300"
+                    }`}
+                    onClick={() => setPaymentMethod("Gcash")}
+                  >
+                    <span className="font-bold">Gcash</span>
+                  </button>
+                  <button
+                    className={`py-3.5 rounded-xl font-bold transition-all shadow-md hover:shadow-lg ${
+                      paymentMethod === "Gcash + Cash"
+                        ? "bg-black text-white"
+                        : "bg-gray-200 text-gray-700 hover:bg-gray-300"
+                    }`}
+                    onClick={() => setPaymentMethod("Gcash + Cash")}
+                  >
+                    <span className="font-bold">Gcash + Cash</span>
+                  </button>
+                  <button
+                    className={`py-3.5 rounded-xl font-bold transition-all shadow-md hover:shadow-lg ${
+                      paymentMethod === "Grab"
+                        ? "bg-black text-white"
+                        : "bg-gray-200 text-gray-700 hover:bg-gray-300"
+                    }`}
+                    onClick={() => setPaymentMethod("Grab")}
+                  >
+                    <span className="font-bold">Grab</span>
+                  </button>
                 </div>
               </div>
 
               {/* Payment Section */}
               <div className="space-y-4">
+                <h1 className="text-black font-bold text-lg mb-2">
+                  Payment Amount
+                </h1>
                 <div className="grid grid-cols-3 gap-3">
                   <button
-                    className="bg-gradient-to-br from-gray-100 to-gray-200 py-3.5 rounded-xl font-bold hover:from-gray-200 hover:to-gray-300 transition-all shadow-md hover:shadow-lg"
+                    className="bg-red-500 text-white py-3.5 rounded-xl font-bold hover:bg-red-600 transition-all shadow-md hover:shadow-lg"
                     onClick={() => setPaymentAmount("100")}
                   >
                     P100
                   </button>
                   <button
-                    className="bg-gradient-to-br from-gray-100 to-gray-200 py-3.5 rounded-xl font-bold hover:from-gray-200 hover:to-gray-300 transition-all shadow-md hover:shadow-lg"
+                    className="bg-red-500 text-white py-3.5 rounded-xl font-bold hover:bg-red-600 transition-all shadow-md hover:shadow-lg"
                     onClick={() => setPaymentAmount("500")}
                   >
                     P500
                   </button>
                   <button
-                    className="bg-gradient-to-br from-gray-100 to-gray-200 py-3.5 rounded-xl font-bold hover:from-gray-200 hover:to-gray-300 transition-all shadow-md hover:shadow-lg"
+                    className="bg-red-500 text-white py-3.5 rounded-xl font-bold hover:bg-red-600 transition-all shadow-md hover:shadow-lg"
                     onClick={() => setPaymentAmount("1000")}
                   >
                     P1000
@@ -868,7 +1150,7 @@ Thank you for your order!
                   </label>
                   <input
                     type="number"
-                    className="w-full px-5 py-4 border-2 border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent text-lg font-semibold transition-all"
+                    className="w-full px-5 py-4 border-2 border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent text-lg font-semibold transition-all"
                     value={paymentAmount}
                     onChange={(e) => setPaymentAmount(e.target.value)}
                     placeholder="0.00"
@@ -876,7 +1158,7 @@ Thank you for your order!
                 </div>
 
                 <button
-                  className="w-full bg-gradient-to-r from-green-600 to-emerald-600 text-white py-5 rounded-xl font-bold text-lg hover:from-green-700 hover:to-emerald-700 transition-all disabled:from-gray-300 disabled:to-gray-400 disabled:cursor-not-allowed shadow-xl hover:shadow-2xl"
+                  className="w-full bg-red-500 text-white py-5 rounded-xl font-bold text-lg hover:bg-red-700 transition-all disabled:bg-gray-300 disabled:cursor-not-allowed shadow-xl hover:shadow-2xl"
                   onClick={handlePayment}
                   disabled={cart.length === 0}
                 >
@@ -887,6 +1169,179 @@ Thank you for your order!
           </div>
         </div>
       </div>
+
+      {/* --- Add-ons Modal --- */}
+      {showAddonsModal && selectedProduct && (
+        <div className="fixed inset-0 bg-black bg-opacity-60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-3xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="p-6 bg-gradient-to-r from-red-600 to-red-500 text-white rounded-t-3xl">
+              <h3 className="text-2xl font-bold">Customize Your Order</h3>
+              <p className="text-red-100 mt-1">{selectedProduct.name}</p>
+            </div>
+
+            <div className="p-6">
+              {/* Add-ons Section */}
+              <div className="mb-6">
+                <h4 className="text-lg font-bold text-gray-800 mb-3">
+                  Add-ons
+                </h4>
+                <div className="grid grid-cols-1 gap-2">
+                  {getFilteredAddons().map((addon) => (
+                    <button
+                      key={addon.id}
+                      className={`p-3 rounded-xl border-2 transition-all text-left ${
+                        selectedAddons.find((a) => a.id === addon.id)
+                          ? "bg-red-100 border-red-500 text-red-700"
+                          : "bg-gray-50 border-gray-200 text-gray-700 hover:border-red-300"
+                      }`}
+                      onClick={() => handleAddonToggle(addon)}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <span className="font-medium">{addon.name}</span>
+                          <span className="text-sm text-gray-500 ml-2">
+                            +₱{Number(addon.price).toFixed(2)}
+                          </span>
+                        </div>
+                        <span
+                          className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${
+                            selectedAddons.find((a) => a.id === addon.id)
+                              ? "bg-red-500 border-red-500 text-white"
+                              : "border-gray-300"
+                          }`}
+                        >
+                          {selectedAddons.find((a) => a.id === addon.id) && "✓"}
+                        </span>
+                      </div>
+                    </button>
+                  ))}
+                  {getFilteredAddons().length === 0 && (
+                    <p className="text-gray-500 text-center py-4">
+                      No addons available for this item
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              {/* Upgrades Section */}
+              <div className="mb-6">
+                <h4 className="text-lg font-bold text-gray-800 mb-3">
+                  Upgrades
+                </h4>
+                <div className="grid grid-cols-1 gap-2">
+                  {getFilteredUpgrades().map((upgrade) => (
+                    <button
+                      key={upgrade.id}
+                      className={`p-3 rounded-xl border-2 transition-all text-left ${
+                        selectedUpgrades.find((u) => u.id === upgrade.id)
+                          ? "bg-blue-100 border-blue-500 text-blue-700"
+                          : "bg-gray-50 border-gray-200 text-gray-700 hover:border-blue-300"
+                      }`}
+                      onClick={() => handleUpgradeToggle(upgrade)}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <span className="font-medium">{upgrade.name}</span>
+                          <span className="text-sm text-gray-500 ml-2">
+                            +₱{Number(upgrade.price).toFixed(2)}
+                          </span>
+                        </div>
+                        <span
+                          className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${
+                            selectedUpgrades.find((u) => u.id === upgrade.id)
+                              ? "bg-blue-500 border-blue-500 text-white"
+                              : "border-gray-300"
+                          }`}
+                        >
+                          {selectedUpgrades.find((u) => u.id === upgrade.id) &&
+                            "✓"}
+                        </span>
+                      </div>
+                    </button>
+                  ))}
+                  {getFilteredUpgrades().length === 0 && (
+                    <p className="text-gray-500 text-center py-4">
+                      No upgrades available for this item
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              {/* Special Instructions */}
+              <div className="mb-6">
+                <h4 className="text-lg font-bold text-gray-800 mb-3">
+                  Special Instructions
+                </h4>
+                <textarea
+                  placeholder="Any special requests or instructions..."
+                  value={specialInstructions}
+                  onChange={(e) => setSpecialInstructions(e.target.value)}
+                  className="w-full p-3 border-2 border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent resize-none"
+                  rows="3"
+                />
+              </div>
+
+              {/* Price Summary */}
+              <div className="bg-gray-50 p-4 rounded-xl mb-6">
+                <div className="flex justify-between items-center mb-2">
+                  <span className="text-gray-600">Base Price:</span>
+                  <span className="font-semibold">
+                    ₱{Number(selectedProduct.price).toFixed(2)}
+                  </span>
+                </div>
+                {selectedAddons.length > 0 && (
+                  <div className="flex justify-between items-center mb-2">
+                    <span className="text-gray-600">Add-ons:</span>
+                    <span className="font-semibold">
+                      +₱{calculateAddonsTotal().toFixed(2)}
+                    </span>
+                  </div>
+                )}
+                {selectedUpgrades.length > 0 && (
+                  <div className="flex justify-between items-center mb-2">
+                    <span className="text-gray-600">Upgrades:</span>
+                    <span className="font-semibold">
+                      +₱{calculateUpgradesTotal().toFixed(2)}
+                    </span>
+                  </div>
+                )}
+                <div className="flex justify-between items-center pt-2 border-t border-gray-200">
+                  <span className="text-lg font-bold text-gray-800">
+                    Total:
+                  </span>
+                  <span className="text-lg font-bold text-red-600">
+                    ₱
+                    {calculateFinalPrice(
+                      selectedProduct,
+                      selectedAddons,
+                      selectedUpgrades
+                    ).toFixed(2)}
+                  </span>
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex gap-3">
+                <button
+                  onClick={confirmAddToCart}
+                  className="flex-1 bg-gradient-to-r from-green-600 to-emerald-600 text-white py-3.5 rounded-xl font-semibold hover:from-green-700 hover:to-emerald-700 transition-all shadow-lg hover:shadow-xl"
+                >
+                  Add to Cart
+                </button>
+                <button
+                  onClick={() => {
+                    setShowAddonsModal(false);
+                    setSelectedProduct(null);
+                  }}
+                  className="flex-1 bg-gray-100 text-gray-700 py-3.5 rounded-xl font-semibold hover:bg-gray-200 transition-all"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* --- Receipt Modal --- */}
       {showReceiptModal && (

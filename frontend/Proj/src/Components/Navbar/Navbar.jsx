@@ -16,10 +16,10 @@ function Navbar({
         <div className="flex justify-between items-center h-20">
           {/* Left Section - Logo and System Name */}
           <div className="flex items-center space-x-5">
-            <div className="w-30 h-12  flex items-center justify-center">
+            <div className="w-15 h-12  flex items-center justify-center">
               <span className="text-white font-bold text-xl">
                 <img
-                  src="https://ssbifood.com/hotlink-ok/ssbi-white-logo.png"
+                  src="https://github.com/Titusss19/K-STREET/blob/jmbranch/ssbi-white-logo.png?raw=true"
                   alt=""
                 />
               </span>

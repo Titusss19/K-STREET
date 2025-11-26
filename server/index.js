@@ -24,8 +24,6 @@ db.connect((err) => {
 });
 
 // ------------------ AUTH ------------------
-
-// Register - FIXED VERSION
 app.post("/register", async (req, res) => {
   try {
     const { email, password, confirmPassword, role, status } = req.body;
@@ -61,7 +59,6 @@ app.post("/register", async (req, res) => {
 
         const hashedPassword = await bcrypt.hash(password, 10);
 
-        // Use role and status from request, or default values
         const userRole = role || "cashier";
         const userStatus = status || "Active";
 
@@ -90,7 +87,6 @@ app.post("/register", async (req, res) => {
   }
 });
 
-// Login - UPDATED TO INCLUDE ROLE
 app.post("/login", (req, res) => {
   try {
     const { email, password } = req.body;
@@ -137,130 +133,46 @@ app.post("/login", (req, res) => {
   }
 });
 
-// Get all users - FIXED VERSION
+// ------------------ USERS ------------------
 app.get("/users", (req, res) => {
   db.execute(
     "SELECT id, email, role, status, created_at FROM users ORDER BY created_at DESC",
     (err, results) => {
-      if (err) {
-        console.error("Error fetching users:", err);
-        return res
-          .status(500)
-          .json({ success: false, message: "Error fetching users" });
-      }
-      res.json({ success: true, users: results });
+      if (err)
+        return res.status(500).json({ success: false, message: err.message });
+      res.json(results);
     }
   );
-});
-
-// Update user - NEW ENDPOINT
-app.put("/users/:id", (req, res) => {
-  const { id } = req.params;
-  const { email, role, status } = req.body;
-
-  if (!email || !role || !status) {
-    return res.status(400).json({
-      success: false,
-      message: "Email, role, and status are required",
-    });
-  }
-
-  db.execute(
-    "UPDATE users SET email = ?, role = ?, status = ? WHERE id = ?",
-    [email, role, status, id],
-    (err, results) => {
-      if (err) {
-        console.error("Error updating user:", err);
-        return res.status(500).json({
-          success: false,
-          message: "Error updating user",
-        });
-      }
-
-      if (results.affectedRows === 0) {
-        return res.status(404).json({
-          success: false,
-          message: "User not found",
-        });
-      }
-
-      res.json({
-        success: true,
-        message: "User updated successfully",
-      });
-    }
-  );
-});
-
-// Delete user - NEW ENDPOINT
-app.delete("/users/:id", (req, res) => {
-  const { id } = req.params;
-
-  db.execute("DELETE FROM users WHERE id = ?", [id], (err, results) => {
-    if (err) {
-      console.error("Error deleting user:", err);
-      return res.status(500).json({
-        success: false,
-        message: "Error deleting user",
-      });
-    }
-
-    if (results.affectedRows === 0) {
-      return res.status(404).json({
-        success: false,
-        message: "User not found",
-      });
-    }
-
-    res.json({
-      success: true,
-      message: "User deleted successfully",
-    });
-  });
 });
 
 // ------------------ ANNOUNCEMENTS ------------------
-
-// Get all announcements - NEW ENDPOINT
 app.get("/announcements", (req, res) => {
   db.execute(
     "SELECT * FROM announcements ORDER BY created_at DESC",
     (err, results) => {
-      if (err) {
-        console.error("Error fetching announcements:", err);
-        return res.status(500).json({
-          success: false,
-          message: "Error fetching announcements",
-        });
-      }
-      res.json({ success: true, announcements: results });
+      if (err)
+        return res.status(500).json({ success: false, message: err.message });
+      res.json(results);
     }
   );
 });
 
-// Create announcement - NEW ENDPOINT
 app.post("/announcements", (req, res) => {
-  const { title, message, type } = req.body;
+  const { title, content, author } = req.body;
 
-  if (!title || !message || !type) {
+  if (!title || !content || !author) {
     return res.status(400).json({
       success: false,
-      message: "Title, message, and type are required",
+      message: "Title, content, and author are required",
     });
   }
 
   db.execute(
-    "INSERT INTO announcements (title, message, type) VALUES (?, ?, ?)",
-    [title, message, type],
+    "INSERT INTO announcements (title, content, author) VALUES (?, ?, ?)",
+    [title, content, author],
     (err, results) => {
-      if (err) {
-        console.error("Error creating announcement:", err);
-        return res.status(500).json({
-          success: false,
-          message: "Error creating announcement",
-        });
-      }
-
+      if (err)
+        return res.status(500).json({ success: false, message: err.message });
       res.status(201).json({
         success: true,
         message: "Announcement created successfully",
@@ -270,66 +182,283 @@ app.post("/announcements", (req, res) => {
   );
 });
 
-// ------------------ ITEMS ------------------
+app.put("/announcements/:id", (req, res) => {
+  const { id } = req.params;
+  const { title, content } = req.body;
 
-// Get all items
+  if (!title || !content) {
+    return res.status(400).json({
+      success: false,
+      message: "Title and content are required",
+    });
+  }
+
+  db.execute(
+    "UPDATE announcements SET title = ?, content = ? WHERE id = ?",
+    [title, content, id],
+    (err) => {
+      if (err)
+        return res.status(500).json({ success: false, message: err.message });
+      res.json({ success: true, message: "Announcement updated" });
+    }
+  );
+});
+
+app.delete("/announcements/:id", (req, res) => {
+  const { id } = req.params;
+  db.execute("DELETE FROM announcements WHERE id = ?", [id], (err) => {
+    if (err)
+      return res.status(500).json({ success: false, message: err.message });
+    res.json({ success: true, message: "Announcement deleted" });
+  });
+});
+
+// ------------------ ITEMS ------------------
 app.get("/items", (req, res) => {
-  db.execute("SELECT * FROM items ORDER BY created_at DESC", (err, results) => {
+  const { description_type } = req.query;
+  
+  let query = "SELECT * FROM items";
+  let params = [];
+  
+  if (description_type) {
+    query += " WHERE description_type = ?";
+    params.push(description_type);
+  }
+  
+  query += " ORDER BY created_at DESC";
+  
+  db.execute(query, params, (err, results) => {
     if (err)
       return res.status(500).json({ success: false, message: err.message });
     res.json(results);
   });
 });
 
-// Add item
 app.post("/items", (req, res) => {
-  const { name, category, price, image } = req.body;
-  if (!name || !category || !price || !image)
+  const { product_code, name, category, description_type, price, image } = req.body;
+  
+  console.log("=== BACKEND: RECEIVING ITEM DATA ===");
+  console.log("Request body:", req.body);
+  
+  if (!product_code || !name || !category || !description_type || !price || !image) {
+    console.log("Missing fields detected");
     return res
       .status(400)
       .json({ success: false, message: "All fields are required" });
+  }
 
+  // Check if product code already exists
   db.execute(
-    "INSERT INTO items (name, category, price, image) VALUES (?, ?, ?, ?)",
-    [name, category, price, image],
+    "SELECT * FROM items WHERE product_code = ?",
+    [product_code],
     (err, results) => {
-      if (err)
+      if (err) {
+        console.error("Database error:", err);
         return res.status(500).json({ success: false, message: err.message });
-      res
-        .status(201)
-        .json({ id: results.insertId, name, category, price, image });
+      }
+      
+      if (results.length > 0) {
+        return res.status(400).json({ 
+          success: false, 
+          message: "Product code already exists. Please use a different code." 
+        });
+      }
+
+      // Insert new item
+      db.execute(
+        "INSERT INTO items (product_code, name, category, description_type, price, image) VALUES (?, ?, ?, ?, ?, ?)",
+        [product_code, name, category, description_type, price, image],
+        (err, results) => {
+          if (err) {
+            console.error("Database error:", err);
+            return res.status(500).json({ success: false, message: err.message });
+          }
+          
+          console.log("✅ ITEM SAVED SUCCESSFULLY!");
+          console.log("Product Code:", product_code);
+          
+          res.status(201).json({ 
+            id: results.insertId, 
+            product_code,
+            name, 
+            category, 
+            description_type, 
+            price, 
+            image 
+          });
+        }
+      );
     }
   );
 });
 
-// Update item
 app.put("/items/:id", (req, res) => {
   const { id } = req.params;
-  const { name, category, price, image } = req.body;
+  const { product_code, name, category, description_type, price, image } = req.body;
+  
+  console.log("=== BACKEND: UPDATING ITEM ===");
+  console.log("Item ID:", id);
+  console.log("Request body:", req.body);
+  
+  // Check if product code already exists (excluding current item)
   db.execute(
-    "UPDATE items SET name = ?, category = ?, price = ?, image = ? WHERE id = ?",
-    [name, category, price, image, id],
-    (err) => {
-      if (err)
+    "SELECT * FROM items WHERE product_code = ? AND id != ?",
+    [product_code, id],
+    (err, results) => {
+      if (err) {
+        console.error("Database error:", err);
         return res.status(500).json({ success: false, message: err.message });
-      res.json({ success: true, message: "Item updated" });
+      }
+      
+      if (results.length > 0) {
+        return res.status(400).json({ 
+          success: false, 
+          message: "Product code already exists. Please use a different code." 
+        });
+      }
+
+      // Update item
+      db.execute(
+        "UPDATE items SET product_code = ?, name = ?, category = ?, description_type = ?, price = ?, image = ? WHERE id = ?",
+        [product_code, name, category, description_type, price, image, id],
+        (err, results) => {
+          if (err) {
+            console.error("Database error:", err);
+            return res.status(500).json({ success: false, message: err.message });
+          }
+          
+          console.log("✅ ITEM UPDATED SUCCESSFULLY!");
+          console.log("Product Code Updated:", product_code);
+          
+          res.json({ 
+            success: true, 
+            message: "Item updated",
+            product_code: product_code 
+          });
+        }
+      );
     }
   );
 });
 
-// Delete item
-app.delete("/items/:id", (req, res) => {
-  const { id } = req.params;
-  db.execute("DELETE FROM items WHERE id = ?", [id], (err) => {
+// ------------------ ADDONS & UPGRADES ------------------
+// Get all addons
+app.get("/addons", (req, res) => {
+  db.execute("SELECT * FROM addons ORDER BY name", (err, results) => {
     if (err)
       return res.status(500).json({ success: false, message: err.message });
-    res.json({ success: true, message: "Item deleted" });
+    res.json(results);
   });
 });
 
-// ------------------ ORDERS ------------------
+// Get all upgrades
+app.get("/upgrades", (req, res) => {
+  db.execute("SELECT * FROM upgrades ORDER BY name", (err, results) => {
+    if (err)
+      return res.status(500).json({ success: false, message: err.message });
+    res.json(results);
+  });
+});
 
-// Get all orders - NEW ENDPOINT
+// Get addons for specific item
+app.get("/items/:id/addons", (req, res) => {
+  const { id } = req.params;
+  const query = `
+    SELECT a.* FROM addons a
+    INNER JOIN item_addons ia ON a.id = ia.addon_id
+    WHERE ia.item_id = ?
+    ORDER BY a.name
+  `;
+  db.execute(query, [id], (err, results) => {
+    if (err)
+      return res.status(500).json({ success: false, message: err.message });
+    res.json(results);
+  });
+});
+
+// Get upgrades for specific item
+app.get("/items/:id/upgrades", (req, res) => {
+  const { id } = req.params;
+  const query = `
+    SELECT u.* FROM upgrades u
+    INNER JOIN item_upgrades iu ON u.id = iu.upgrade_id
+    WHERE iu.item_id = ?
+    ORDER BY u.name
+  `;
+  db.execute(query, [id], (err, results) => {
+    if (err)
+      return res.status(500).json({ success: false, message: err.message });
+    res.json(results);
+  });
+});
+
+// Add new addon
+app.post("/addons", (req, res) => {
+  const { name, price } = req.body;
+  if (!name || !price) {
+    return res
+      .status(400)
+      .json({ success: false, message: "Name and price are required" });
+  }
+  db.execute(
+    "INSERT INTO addons (name, price) VALUES (?, ?)",
+    [name, price],
+    (err, results) => {
+      if (err)
+        return res.status(500).json({ success: false, message: err.message });
+      res.status(201).json({ success: true, addonId: results.insertId });
+    }
+  );
+});
+
+// Add new upgrade
+app.post("/upgrades", (req, res) => {
+  const { name, price } = req.body;
+  if (!name || !price) {
+    return res
+      .status(400)
+      .json({ success: false, message: "Name and price are required" });
+  }
+  db.execute(
+    "INSERT INTO upgrades (name, price) VALUES (?, ?)",
+    [name, price],
+    (err, results) => {
+      if (err)
+        return res.status(500).json({ success: false, message: err.message });
+      res.status(201).json({ success: true, upgradeId: results.insertId });
+    }
+  );
+});
+
+// Link addon to item
+app.post("/items/:id/addons/:addonId", (req, res) => {
+  const { id, addonId } = req.params;
+  db.execute(
+    "INSERT INTO item_addons (item_id, addon_id) VALUES (?, ?)",
+    [id, addonId],
+    (err, results) => {
+      if (err)
+        return res.status(500).json({ success: false, message: err.message });
+      res.status(201).json({ success: true });
+    }
+  );
+});
+
+// Link upgrade to item
+app.post("/items/:id/upgrades/:upgradeId", (req, res) => {
+  const { id, upgradeId } = req.params;
+  db.execute(
+    "INSERT INTO item_upgrades (item_id, upgrade_id) VALUES (?, ?)",
+    [id, upgradeId],
+    (err, results) => {
+      if (err)
+        return res.status(500).json({ success: false, message: err.message });
+      res.status(201).json({ success: true });
+    }
+  );
+});
+
+// ------------------ ORDERS ------------------
 app.get("/orders", (req, res) => {
   const query = `
     SELECT 
@@ -339,23 +468,22 @@ app.get("/orders", (req, res) => {
     LEFT JOIN users u ON o.userId = u.id
     ORDER BY o.created_at DESC
   `;
-  
+
   db.execute(query, (err, results) => {
     if (err) {
       console.error("Error fetching orders:", err);
       return res.status(500).json({
         success: false,
-        message: "Error fetching orders"
+        message: "Error fetching orders",
       });
     }
-    
-    console.log(`Fetched ${results.length} orders from database`);
     res.json(results);
   });
 });
 
-// Save order - FIXED VERSION
 app.post("/orders", (req, res) => {
+  console.log("=== BACKEND: RECEIVING ORDER ===");
+
   const {
     userId,
     paidAmount,
@@ -365,9 +493,10 @@ app.post("/orders", (req, res) => {
     orderType,
     productNames,
     items,
+    paymentMethod,
   } = req.body;
 
-  console.log("Received order data:", req.body);
+  console.log("Payment Method received:", paymentMethod);
 
   if (!userId || paidAmount === undefined || paidAmount === null) {
     return res.status(400).json({
@@ -376,10 +505,16 @@ app.post("/orders", (req, res) => {
     });
   }
 
-  // FIXED: Ensure we have default values
+  const validPaymentMethods = ["Cash", "Gcash", "Gcash + Cash", "Grab"];
+  const finalPaymentMethod = validPaymentMethods.includes(paymentMethod)
+    ? paymentMethod
+    : "Cash";
+
+  console.log("Final paymentMethod to save:", finalPaymentMethod);
+
   const query = `
-    INSERT INTO orders (userId, paidAmount, total, discountApplied, changeAmount, orderType, productNames, items)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO orders (userId, paidAmount, total, discountApplied, changeAmount, orderType, productNames, items, payment_method)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `;
 
   db.query(
@@ -391,25 +526,29 @@ app.post("/orders", (req, res) => {
       discountApplied ? 1 : 0,
       changeAmount || 0,
       orderType || "Dine In",
-      productNames || "No items", // Default value if null
-      items || "[]", // Default value if null
+      productNames || "No items",
+      items || "[]",
+      finalPaymentMethod,
     ],
     (err, result) => {
       if (err) {
         console.error("Failed to save order:", err);
         return res.status(500).json({ message: "Failed to save order" });
       }
+
+      console.log("✅ ORDER SAVED SUCCESSFULLY!");
+      console.log("Payment Method Saved:", finalPaymentMethod);
+
       res.status(200).json({
         message: "Order saved successfully",
         orderId: result.insertId,
+        paymentMethod: finalPaymentMethod,
       });
     }
   );
 });
 
 // ------------------ STORE HOURS ------------------
-
-// Log store open/close action
 app.post("/store-hours/log-store-action", async (req, res) => {
   try {
     const { userId, userEmail, action } = req.body;
@@ -449,54 +588,6 @@ app.post("/store-hours/log-store-action", async (req, res) => {
   }
 });
 
-// Get store action history
-app.get("/store-hours/store-action-history", async (req, res) => {
-  try {
-    const { page = 1, limit = 50 } = req.query;
-    const offset = (page - 1) * limit;
-
-    const query = `
-      SELECT * FROM store_hours_logs 
-      ORDER BY timestamp DESC 
-      LIMIT ? OFFSET ?
-    `;
-
-    db.query(query, [parseInt(limit), parseInt(offset)], (err, logs) => {
-      if (err) {
-        console.error("Error fetching store action history:", err);
-        return res.status(500).json({ error: "Internal server error" });
-      }
-
-      // Get total count for pagination
-      db.query(
-        "SELECT COUNT(*) as total FROM store_hours_logs",
-        (err, countResult) => {
-          if (err) {
-            console.error("Error counting store actions:", err);
-            return res.status(500).json({ error: "Internal server error" });
-          }
-
-          const total = countResult[0].total;
-
-          res.json({
-            logs,
-            pagination: {
-              currentPage: parseInt(page),
-              totalPages: Math.ceil(total / limit),
-              totalItems: total,
-              itemsPerPage: parseInt(limit),
-            },
-          });
-        }
-      );
-    });
-  } catch (error) {
-    console.error("Error fetching store action history:", error);
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
-
-// Get current store status (latest action)
 app.get("/store-hours/current-store-status", async (req, res) => {
   try {
     const query = `
@@ -530,22 +621,31 @@ app.get("/", (req, res) => {
       auth: {
         register: "POST /register",
         login: "POST /login",
-        users: "GET /users",
-        updateUser: "PUT /users/:id",
-        deleteUser: "DELETE /users/:id",
       },
+      users: "GET /users",
       announcements: {
         get: "GET /announcements",
         create: "POST /announcements",
+        update: "PUT /announcements/:id",
+        delete: "DELETE /announcements/:id",
       },
       items: "GET /items",
+      addons: {
+        get: "GET /addons",
+        create: "POST /addons",
+        getForItem: "GET /items/:id/addons",
+      },
+      upgrades: {
+        get: "GET /upgrades",
+        create: "POST /upgrades",
+        getForItem: "GET /items/:id/upgrades",
+      },
       orders: {
         get: "GET /orders",
         create: "POST /orders",
       },
       storeHours: {
         logAction: "POST /store-hours/log-store-action",
-        getHistory: "GET /store-hours/store-action-history",
         getStatus: "GET /store-hours/current-store-status",
       },
     },
