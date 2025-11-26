@@ -63,9 +63,27 @@ export default function Dashboard() {
     setLoading(true);
     try {
       const response = await fetch("http://localhost:3002/users");
-      const data = await response.json();
 
-      if (data.success) {
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const data = await response.json();
+      console.log("Users API Response:", data);
+
+      // Handle both array and object response formats
+      if (Array.isArray(data)) {
+        // Direct array response
+        const transformedUsers = data.map((user) => ({
+          id: user.id,
+          email: user.email,
+          role: user.role || "cashier",
+          created_at: user.created_at,
+          status: user.status || "Active",
+        }));
+        setEmployees(transformedUsers);
+      } else if (data.success && Array.isArray(data.users)) {
+        // Object with success flag
         const transformedUsers = data.users.map((user) => ({
           id: user.id,
           email: user.email,
@@ -73,13 +91,14 @@ export default function Dashboard() {
           created_at: user.created_at,
           status: user.status || "Active",
         }));
-
         setEmployees(transformedUsers);
       } else {
-        console.error("Failed to fetch users:", data.message);
+        console.error("Unexpected users response format:", data);
+        setEmployees([]);
       }
     } catch (error) {
       console.error("Error fetching users:", error);
+      setEmployees([]);
     } finally {
       setLoading(false);
     }
@@ -89,28 +108,43 @@ export default function Dashboard() {
     setAnnouncementsLoading(true);
     try {
       const response = await fetch("http://localhost:3002/announcements");
-      const data = await response.json();
 
-      if (data.success) {
-        const transformedAnnouncements = data.announcements.map(
-          (announcement) => ({
-            id: announcement.id,
-            type: announcement.type,
-            title: announcement.title,
-            message: announcement.message,
-            time: getTimeAgo(announcement.created_at),
-            icon: getAnnouncementIcon(announcement.type),
-            color: getAnnouncementColor(announcement.type),
-            created_at: announcement.created_at,
-          })
-        );
-
-        setAnnouncements(transformedAnnouncements);
-      } else {
-        console.error("Failed to fetch announcements:", data.message);
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
       }
+
+      const data = await response.json();
+      console.log("Announcements API Response:", data);
+
+      // Handle both array and object response formats
+      let announcementsData = [];
+
+      if (Array.isArray(data)) {
+        announcementsData = data;
+      } else if (data.success && Array.isArray(data.announcements)) {
+        announcementsData = data.announcements;
+      } else {
+        console.error("Unexpected announcements response format:", data);
+        announcementsData = [];
+      }
+
+      const transformedAnnouncements = announcementsData.map(
+        (announcement) => ({
+          id: announcement.id,
+          type: announcement.type || "info",
+          title: announcement.title,
+          message: announcement.content || announcement.message,
+          time: getTimeAgo(announcement.created_at),
+          icon: getAnnouncementIcon(announcement.type || "info"),
+          color: getAnnouncementColor(announcement.type || "info"),
+          created_at: announcement.created_at,
+        })
+      );
+
+      setAnnouncements(transformedAnnouncements);
     } catch (error) {
       console.error("Error fetching announcements:", error);
+      setAnnouncements([]);
     } finally {
       setAnnouncementsLoading(false);
     }
@@ -120,17 +154,33 @@ export default function Dashboard() {
     setOrdersLoading(true);
     try {
       const response = await fetch("http://localhost:3002/orders");
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
       const ordersData = await response.json();
+      console.log("Orders API Response:", ordersData);
+
+      // Handle both array and object response formats
+      let ordersArray = [];
 
       if (Array.isArray(ordersData)) {
-        setOrders(ordersData);
-        const processedData = processOrdersData(ordersData);
-        setSalesData(processedData);
+        ordersArray = ordersData;
+      } else if (ordersData.success && Array.isArray(ordersData.orders)) {
+        ordersArray = ordersData.orders;
       } else {
-        console.error("Failed to fetch orders:", ordersData);
+        console.error("Unexpected orders response format:", ordersData);
+        ordersArray = [];
       }
+
+      setOrders(ordersArray);
+      const processedData = processOrdersData(ordersArray);
+      setSalesData(processedData);
     } catch (error) {
       console.error("Error fetching orders:", error);
+      setOrders([]);
+      setSalesData([]);
     } finally {
       setOrdersLoading(false);
     }
@@ -268,14 +318,15 @@ export default function Dashboard() {
           },
           body: JSON.stringify({
             title: newAnnouncement.title,
-            message: newAnnouncement.message,
+            content: newAnnouncement.message,
+            author: user?.email || "Admin",
             type: newAnnouncement.type,
           }),
         });
 
         const data = await response.json();
 
-        if (data.success) {
+        if (data.success || data.announcementId) {
           fetchAnnouncements();
           setNewAnnouncement({ title: "", message: "", type: "info" });
           setShowAnnouncementModal(false);
@@ -511,7 +562,7 @@ export default function Dashboard() {
             {/* Header */}
             <div className="mb-6 flex justify-between items-center">
               <h1 className="text-2xl font-bold text-gray-800">
-                Today's Sales
+              
               </h1>
               <div className="flex gap-2">
                 <button

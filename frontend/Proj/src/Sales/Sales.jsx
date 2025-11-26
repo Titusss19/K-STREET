@@ -105,7 +105,6 @@ const Sales = ({ user }) => {
       },
     ];
   };
-
   // Export to Excel
   const exportToExcel = async () => {
     const filteredSales = getFilteredSales();
@@ -119,20 +118,20 @@ const Sales = ({ user }) => {
     const worksheet = workbook.addWorksheet("Sales Report");
 
     // Company Header
-    worksheet.mergeCells("A1:H1");
+    worksheet.mergeCells("A1:I1");
     const companyCell = worksheet.getCell("A1");
-    companyCell.value = "FOODHUB SALES REPORT";
+    companyCell.value = "K - STREET";
     companyCell.alignment = { horizontal: "center", vertical: "middle" };
     companyCell.font = { size: 20, bold: true, color: { argb: "FFFFFFFF" } };
     companyCell.fill = {
       type: "pattern",
       pattern: "solid",
-      fgColor: { argb: "FF1B5E20" },
+      fgColor: { argb: "FFFF0000" }, // RED
     };
     worksheet.getRow(1).height = 35;
 
     // Date Range Info
-    worksheet.mergeCells("A2:H2");
+    worksheet.mergeCells("A2:I2");
     const dateRangeCell = worksheet.getCell("A2");
     let rangeText = "All Time";
     if (exportRange === "today") {
@@ -146,7 +145,7 @@ const Sales = ({ user }) => {
     dateRangeCell.fill = {
       type: "pattern",
       pattern: "solid",
-      fgColor: { argb: "FFE8F5E9" },
+      fgColor: { argb: "FFFFEBEE" }, // RED TINT
     };
 
     // Summary Section
@@ -158,13 +157,22 @@ const Sales = ({ user }) => {
     const avgTransaction =
       totalTransactions > 0 ? totalSales / totalTransactions : 0;
 
+    // Only transaction dates in summary
+    const transactionDates = [
+      ...new Set(
+        filteredSales.map((sale) =>
+          new Date(sale.created_at).toLocaleDateString("en-PH")
+        )
+      ),
+    ].join(", ");
+
     worksheet.mergeCells("A3:B3");
     worksheet.getCell("A3").value = "SUMMARY";
     worksheet.getCell("A3").font = { bold: true, size: 12 };
     worksheet.getCell("A3").fill = {
       type: "pattern",
       pattern: "solid",
-      fgColor: { argb: "FF81C784" },
+      fgColor: { argb: "FFFFCDD2" }, // RED TINT
     };
 
     worksheet.mergeCells("A4:B4");
@@ -185,10 +193,13 @@ const Sales = ({ user }) => {
       maximumFractionDigits: 2,
     })}`;
 
+    worksheet.mergeCells("A7:B7");
+    worksheet.getCell("A7").value = `Transaction Dates: ${transactionDates}`;
+
     // Add spacing
     worksheet.addRow([]);
 
-    // Table Headers - UPDATED: Added Products column
+    // Table Headers - Added Payment Method column beside Order Type
     const headerRow = worksheet.addRow([
       "Order ID",
       "Products",
@@ -197,6 +208,7 @@ const Sales = ({ user }) => {
       "Change",
       "Cashier",
       "Order Type",
+      "Payment Method",
       "Transaction Time",
     ]);
 
@@ -205,7 +217,7 @@ const Sales = ({ user }) => {
       cell.fill = {
         type: "pattern",
         pattern: "solid",
-        fgColor: { argb: "FF2E7D32" },
+        fgColor: { argb: "FFD32F2F" }, // RED
       };
       cell.alignment = { horizontal: "center", vertical: "middle" };
       cell.border = {
@@ -217,16 +229,17 @@ const Sales = ({ user }) => {
     });
     headerRow.height = 25;
 
-    // Data rows with alternating colors - UPDATED: Added Products data
+    // Data rows with alternating colors - Added Payment Method column
     filteredSales.forEach((sale, index) => {
       const row = worksheet.addRow([
         sale.id,
-        formatProductNames(sale), // NEW: Products column
+        formatProductNames(sale),
         parseFloat(sale.total),
         parseFloat(sale.paidAmount),
         parseFloat(sale.changeAmount),
         sale.cashier || "Unknown",
         sale.orderType,
+        sale.payment_method || "Unknown",
         new Date(sale.created_at).toLocaleTimeString("en-PH"),
       ]);
 
@@ -244,7 +257,7 @@ const Sales = ({ user }) => {
           cell.fill = {
             type: "pattern",
             pattern: "solid",
-            fgColor: { argb: "FFF1F8E9" },
+            fgColor: { argb: "FFFFEBEE" }, // RED TINT
           };
         }
 
@@ -265,19 +278,20 @@ const Sales = ({ user }) => {
       });
     });
 
-    // Column widths - UPDATED: Added width for Products column
+    // Column widths - Added width for Payment Method column
     worksheet.getColumn(1).width = 12;
-    worksheet.getColumn(2).width = 30; // NEW: Products column width
+    worksheet.getColumn(2).width = 30;
     worksheet.getColumn(3).width = 15;
     worksheet.getColumn(4).width = 15;
     worksheet.getColumn(5).width = 15;
     worksheet.getColumn(6).width = 15;
     worksheet.getColumn(7).width = 15;
     worksheet.getColumn(8).width = 18;
+    worksheet.getColumn(9).width = 18;
 
     // Footer
     const footerRowNum = worksheet.rowCount + 2;
-    worksheet.mergeCells(`A${footerRowNum}:H${footerRowNum}`);
+    worksheet.mergeCells(`A${footerRowNum}:I${footerRowNum}`);
     const footerCell = worksheet.getCell(`A${footerRowNum}`);
     footerCell.value = `Generated: ${new Date().toLocaleString(
       "en-PH"
@@ -287,7 +301,7 @@ const Sales = ({ user }) => {
 
     // Save File
     const buffer = await workbook.xlsx.writeBuffer();
-    const filename = `Sales_Report_${exportRange}_${
+    const filename = `K-Street-Sales_Report_${exportRange}_${
       new Date().toISOString().split("T")[0]
     }.xlsx`;
     saveAs(
@@ -323,11 +337,11 @@ const Sales = ({ user }) => {
   return (
     <div className="p-6  min-h-screen">
       <div className="max-w-7xl mx-auto bg-white p-6 rounded-lg shadow">
-        <h1 className="text-2xl font-bold mb-4">Sales Report</h1>
+        <h1 className="text-2xl font-bold mb-4">SALES REPORT</h1>
 
         {/* Export Options */}
         <div className="mb-1 p-4">
-          <h3 className="font-semibold mb-3 text-green-800">Export Options</h3>
+          <h3 className="font-semibold mb-3 text-black">Export Options</h3>
 
           <div className="flex flex-wrap gap-4 items-end">
             <div>
@@ -371,7 +385,7 @@ const Sales = ({ user }) => {
 
             <button
               onClick={exportToExcel}
-              className="bg-green-600 text-white px-6 py-2 rounded-lg hover:bg-green-700 font-medium"
+              className="bg-red-600 text-white px-6 py-2 rounded-lg hover:bg-black font-medium"
             >
               Export to Excel
             </button>
@@ -383,7 +397,7 @@ const Sales = ({ user }) => {
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead>
-                <tr className="bg-gradient-to-r from-green-600 to-emerald-600 text-white">
+                <tr className="bg-red-500 text-white">
                   <th className="px-6 py-4 text-left text-sm font-semibold tracking-wide">
                     #
                   </th>
@@ -409,6 +423,9 @@ const Sales = ({ user }) => {
                     Order Type
                   </th>
                   <th className="px-6 py-4 text-center text-sm font-semibold tracking-wide">
+                    Payment Method
+                  </th>
+                  <th className="px-6 py-4 text-center text-sm font-semibold tracking-wide">
                     Action
                   </th>
                 </tr>
@@ -417,7 +434,7 @@ const Sales = ({ user }) => {
                 {currentSales.map((sale, index) => (
                   <tr
                     key={sale.id}
-                    className="hover:bg-gradient-to-r hover:from-green-50 hover:to-emerald-50 transition-colors duration-150"
+                    className="hover:bg-gradient-to-r hover:from-red-50 hover:to-red-50 transition-colors duration-150"
                   >
                     <td className="px-6 py-4 text-sm font-medium text-gray-900">
                       #{sale.id}
@@ -452,14 +469,19 @@ const Sales = ({ user }) => {
                       {sale.cashier || "Unknown"}
                     </td>
                     <td className="px-6 py-4 text-center">
-                      <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                      <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-red-100 text-black">
                         {sale.orderType}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 text-center">
+                      <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-red-100 text-black">
+                        {sale.payment_method}
                       </span>
                     </td>
                     <td className="px-6 py-4 text-center">
                       <button
                         onClick={() => setShowReceipt(sale)}
-                        className="bg-gradient-to-r from-green-500 to-emerald-500 text-white px-4 py-2 rounded-lg hover:from-green-600 hover:to-emerald-600 transition-all duration-200 text-sm font-medium shadow-sm hover:shadow-md"
+                        className="bg-gradient-to-r from-black to-black text-white px-4 py-2 rounded-lg hover:from-red-600 hover:to-red-600 transition-all duration-200 text-sm font-medium shadow-sm hover:shadow-md"
                       >
                         View Receipt
                       </button>
@@ -514,7 +536,7 @@ const Sales = ({ user }) => {
                   className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
                     currentPage === totalPages
                       ? "bg-gray-200 text-gray-400 cursor-not-allowed"
-                      : "bg-gradient-to-r from-green-500 to-emerald-500 text-white hover:from-green-600 hover:to-emerald-600"
+                      : "bg-gradient-to-r from-red-500 to-red-500 text-white hover:from-black hover:to-black "
                   }`}
                 >
                   Next
@@ -530,7 +552,7 @@ const Sales = ({ user }) => {
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 print:bg-white">
           <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full print:shadow-none print:max-w-full">
             {/* Modal Header - Hidden on Print */}
-            <div className="flex justify-between items-center bg-gradient-to-r from-green-600 to-emerald-600 text-white p-5 rounded-t-2xl print:hidden">
+            <div className="flex justify-between items-center bg-gradient-to-r from-red-600 to-red-600 text-white p-5 rounded-t-2xl print:hidden">
               <h3 className="text-lg font-bold">Receipt Preview</h3>
               <button
                 onClick={() => setShowReceipt(null)}
@@ -641,7 +663,7 @@ const Sales = ({ user }) => {
             <div className="p-5 flex justify-end gap-3 print:hidden border-t border-gray-100">
               <button
                 onClick={printReceipt}
-                className="bg-green-600 text-white px-6 py-2.5 rounded-lg hover:bg-green-700 font-medium transition-all duration-200"
+                className="bg-red-600 text-white px-6 py-2.5 rounded-lg hover:bg-black-700 font-medium transition-all duration-200"
               >
                 Print Receipt
               </button>
