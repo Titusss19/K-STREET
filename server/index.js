@@ -329,6 +329,31 @@ app.delete("/items/:id", (req, res) => {
 
 // ------------------ ORDERS ------------------
 
+// Get all orders - NEW ENDPOINT
+app.get("/orders", (req, res) => {
+  const query = `
+    SELECT 
+      o.*,
+      u.email as cashier
+    FROM orders o
+    LEFT JOIN users u ON o.userId = u.id
+    ORDER BY o.created_at DESC
+  `;
+  
+  db.execute(query, (err, results) => {
+    if (err) {
+      console.error("Error fetching orders:", err);
+      return res.status(500).json({
+        success: false,
+        message: "Error fetching orders"
+      });
+    }
+    
+    console.log(`Fetched ${results.length} orders from database`);
+    res.json(results);
+  });
+});
+
 // Save order - FIXED VERSION
 app.post("/orders", (req, res) => {
   const {
@@ -339,7 +364,7 @@ app.post("/orders", (req, res) => {
     changeAmount,
     orderType,
     productNames,
-    items
+    items,
   } = req.body;
 
   console.log("Received order data:", req.body);
@@ -367,7 +392,7 @@ app.post("/orders", (req, res) => {
       changeAmount || 0,
       orderType || "Dine In",
       productNames || "No items", // Default value if null
-      items || "[]" // Default value if null
+      items || "[]", // Default value if null
     ],
     (err, result) => {
       if (err) {
@@ -514,7 +539,10 @@ app.get("/", (req, res) => {
         create: "POST /announcements",
       },
       items: "GET /items",
-      orders: "POST /orders",
+      orders: {
+        get: "GET /orders",
+        create: "POST /orders",
+      },
       storeHours: {
         logAction: "POST /store-hours/log-store-action",
         getHistory: "GET /store-hours/store-action-history",

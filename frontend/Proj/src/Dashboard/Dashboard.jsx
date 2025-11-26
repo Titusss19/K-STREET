@@ -496,7 +496,10 @@ export default function Dashboard() {
         {activeView === "dashboard" ? (
           <div className="max-w-7xl mx-auto">
             {/* Welcome Message */}
-            <div className="mb-6 bg-gradient-to-r from-green-500 to-green-600 rounded-xl shadow-lg p-6">
+            <div
+              className="mb-6 rounded-xl shadow-lg p-6"
+              style={{ backgroundColor: "#F64E60" }}
+            >
               <h1 className="text-2xl font-bold text-white">
                 Welcome, {user?.email || "User"}!
               </h1>
@@ -524,7 +527,7 @@ export default function Dashboard() {
                 </button>
                 <button className="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 flex items-center gap-2 shadow-sm transition-all hover:shadow">
                   <Package size={16} />
-                  Export
+                  Attendance
                 </button>
               </div>
             </div>
@@ -541,7 +544,7 @@ export default function Dashboard() {
                 <div className="text-3xl font-bold text-gray-800 mb-1">
                   ₱{stats.totalSales.toFixed(2)}
                 </div>
-                <div className="text-sm text-gray-600 mb-2">Total Sales</div>
+                <div className="text-sm text-gray-600 mb-2">Gross Sales</div>
                 <div className="text-xs text-pink-600 font-medium">
                   All time revenue
                 </div>
@@ -560,7 +563,7 @@ export default function Dashboard() {
                 <div className="text-sm text-gray-600 mb-2">
                   Today Transactions
                 </div>
-                <div className="text-xs text-orange-600 font-medium">
+                <div className="text- text-orange-600 font-medium">
                   ₱{stats.todaySales.toFixed(2)} today
                 </div>
               </div>
@@ -685,7 +688,7 @@ export default function Dashboard() {
                   </button>
                   <button
                     onClick={() => setShowAddUserModal(true)}
-                    className="px-4 py-2 bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white font-medium rounded-lg shadow-md hover:shadow-lg transition-all transform hover:scale-105 flex items-center gap-2"
+                    className="px-4 py-2 bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white font-medium rounded-lg shadow-md hover:shadow-lg transition-all transform hover:scale-105 flex items-center gap-2"
                   >
                     <UserPlus size={18} />
                     Add User
@@ -949,7 +952,7 @@ export default function Dashboard() {
                     })
                   }
                   placeholder="Enter email address"
-                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all"
+                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent outline-none transition-all"
                 />
               </div>
 
@@ -967,7 +970,7 @@ export default function Dashboard() {
                     })
                   }
                   placeholder="Enter password (min. 6 characters)"
-                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all"
+                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent outline-none transition-all"
                 />
               </div>
 
@@ -985,7 +988,7 @@ export default function Dashboard() {
                     })
                   }
                   placeholder="Confirm password"
-                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all"
+                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent outline-none transition-all"
                 />
               </div>
 
@@ -1001,7 +1004,7 @@ export default function Dashboard() {
                       role: e.target.value,
                     })
                   }
-                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all"
+                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent outline-none transition-all"
                 >
                   <option value="cashier">Cashier</option>
                   <option value="manager">Manager</option>
@@ -1021,7 +1024,7 @@ export default function Dashboard() {
                       status: e.target.value,
                     })
                   }
-                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all"
+                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-red focus:border-transparent outline-none transition-all"
                 >
                   <option value="Active">Active</option>
                   <option value="Inactive">Inactive</option>
@@ -1037,7 +1040,7 @@ export default function Dashboard() {
                 </button>
                 <button
                   onClick={handleAddUser}
-                  className="flex-1 px-4 py-2.5 bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white font-medium rounded-lg shadow-md hover:shadow-lg transition-all transform hover:scale-105"
+                  className="flex-1 px-4 py-2.5 bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white font-medium rounded-lg shadow-md hover:shadow-lg transition-all transform hover:scale-105"
                 >
                   Add User
                 </button>

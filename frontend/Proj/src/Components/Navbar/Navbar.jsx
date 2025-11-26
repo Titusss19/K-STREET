@@ -11,15 +11,22 @@ function Navbar({
   showWelcome = true,
 }) {
   return (
-    <header className="bg-white shadow-lg sticky top-0 z-10">
+    <header className="bg-white shadow-2g sticky top-0 z-10">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between items-center h-20">
           {/* Left Section - Logo and System Name */}
           <div className="flex items-center space-x-5">
-            <div className="w-12 h-12 bg-gradient-to-r from-green-500 to-green-600 rounded-full flex items-center justify-center">
-              <span className="text-white font-bold text-xl">{logoText}</span>
+            <div className="w-30 h-12  flex items-center justify-center">
+              <span className="text-white font-bold text-xl">
+                <img
+                  src="https://ssbifood.com/hotlink-ok/ssbi-white-logo.png"
+                  alt=""
+                />
+              </span>
             </div>
-            <h1 className="text-2xl font-bold text-gray-800">{systemName}</h1>
+            <h1 className="text-2xl font-medium" style={{ color: "red" }}>
+              K - STREET
+            </h1>
           </div>
 
           {/* Right Section - User Info and Navigation */}
@@ -35,8 +42,8 @@ function Navbar({
                 className={`w-6 h-6 transition-colors duration-200 
                   ${
                     activeView === "dashboard"
-                      ? "text-green-600"
-                      : "text-gray-600 hover:text-green-600"
+                      ? "text-red-600"
+                      : "text-gray-600 hover:text-red-600"
                   }`}
               />
             </button>
@@ -49,8 +56,8 @@ function Navbar({
                 className={`w-6 h-6 transition-colors duration-200 
                   ${
                     activeView === "pos"
-                      ? "text-green-600"
-                      : "text-gray-600 hover:text-green-600"
+                      ? "text-red-600"
+                      : "text-gray-600 hover:text-red-600"
                   }`}
               />
             </button>
@@ -63,8 +70,8 @@ function Navbar({
                 className={`w-6 h-6 transition-colors duration-200 
                   ${
                     activeView === "sales"
-                      ? "text-green-600"
-                      : "text-gray-600 hover:text-green-600"
+                      ? "text-red-600"
+                      : "text-gray-600 hover:text-red-600"
                   }`}
               />
             </button>
@@ -77,8 +84,8 @@ function Navbar({
                 className={`w-6 h-6 transition-colors duration-200 
                   ${
                     activeView === "Items"
-                      ? "text-green-600"
-                      : "text-gray-600 hover:text-green-600"
+                      ? "text-red-600"
+                      : "text-gray-600 hover:text-red-600"
                   }`}
               />
             </button>
