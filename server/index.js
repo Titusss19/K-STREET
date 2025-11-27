@@ -215,247 +215,194 @@ app.delete("/announcements/:id", (req, res) => {
 
 // ------------------ ITEMS ------------------
 app.get("/items", (req, res) => {
-  const { description_type } = req.query;
-  
-  let query = "SELECT * FROM items";
-  let params = [];
-  
-  if (description_type) {
-    query += " WHERE description_type = ?";
-    params.push(description_type);
-  }
-  
-  query += " ORDER BY created_at DESC";
-  
-  db.execute(query, params, (err, results) => {
+  const query =
+    "SELECT * FROM items WHERE description_type = 'k-street food' ORDER BY created_at DESC";
+
+  db.execute(query, (err, results) => {
     if (err)
       return res.status(500).json({ success: false, message: err.message });
     res.json(results);
   });
 });
 
+// CREATE ITEM ROUTE
 app.post("/items", (req, res) => {
-  const { product_code, name, category, description_type, price, image } = req.body;
-  
-  console.log("=== BACKEND: RECEIVING ITEM DATA ===");
+  const { product_code, name, category, description_type, price, image } =
+    req.body;
+
+  console.log("=== BACKEND: CREATING ITEM ===");
   console.log("Request body:", req.body);
-  
-  if (!product_code || !name || !category || !description_type || !price || !image) {
+
+  if (
+    !product_code ||
+    !name ||
+    !category ||
+    !description_type ||
+    !price ||
+    !image
+  ) {
     console.log("Missing fields detected");
-    return res
-      .status(400)
-      .json({ success: false, message: "All fields are required" });
+    return res.status(400).json({
+      success: false,
+      message: "All fields are required",
+    });
   }
 
-  // Check if product code already exists
+  // INSERT NEW ITEM WITHOUT CHECKING FOR DUPLICATE PRODUCT CODES
   db.execute(
-    "SELECT * FROM items WHERE product_code = ?",
-    [product_code],
+    "INSERT INTO items (product_code, name, category, description_type, price, image) VALUES (?, ?, ?, ?, ?, ?)",
+    [product_code, name, category, description_type, price, image],
     (err, results) => {
       if (err) {
         console.error("Database error:", err);
-        return res.status(500).json({ success: false, message: err.message });
-      }
-      
-      if (results.length > 0) {
-        return res.status(400).json({ 
-          success: false, 
-          message: "Product code already exists. Please use a different code." 
+        return res.status(500).json({
+          success: false,
+          message: err.message,
         });
       }
 
-      // Insert new item
-      db.execute(
-        "INSERT INTO items (product_code, name, category, description_type, price, image) VALUES (?, ?, ?, ?, ?, ?)",
-        [product_code, name, category, description_type, price, image],
-        (err, results) => {
-          if (err) {
-            console.error("Database error:", err);
-            return res.status(500).json({ success: false, message: err.message });
-          }
-          
-          console.log("✅ ITEM SAVED SUCCESSFULLY!");
-          console.log("Product Code:", product_code);
-          
-          res.status(201).json({ 
-            id: results.insertId, 
-            product_code,
-            name, 
-            category, 
-            description_type, 
-            price, 
-            image 
-          });
-        }
-      );
+      console.log("✅ ITEM CREATED SUCCESSFULLY!");
+      console.log("Product Code:", product_code);
+
+      res.status(201).json({
+        success: true,
+        id: results.insertId,
+        product_code,
+        name,
+        category,
+        description_type,
+        price,
+        image,
+      });
     }
   );
 });
 
+// UPDATE ITEM ROUTE
 app.put("/items/:id", (req, res) => {
   const { id } = req.params;
-  const { product_code, name, category, description_type, price, image } = req.body;
-  
+  const { product_code, name, category, description_type, price, image } =
+    req.body;
+
   console.log("=== BACKEND: UPDATING ITEM ===");
   console.log("Item ID:", id);
   console.log("Request body:", req.body);
-  
-  // Check if product code already exists (excluding current item)
-  db.execute(
-    "SELECT * FROM items WHERE product_code = ? AND id != ?",
-    [product_code, id],
-    (err, results) => {
-      if (err) {
-        console.error("Database error:", err);
-        return res.status(500).json({ success: false, message: err.message });
-      }
-      
-      if (results.length > 0) {
-        return res.status(400).json({ 
-          success: false, 
-          message: "Product code already exists. Please use a different code." 
-        });
-      }
 
-      // Update item
-      db.execute(
-        "UPDATE items SET product_code = ?, name = ?, category = ?, description_type = ?, price = ?, image = ? WHERE id = ?",
-        [product_code, name, category, description_type, price, image, id],
-        (err, results) => {
-          if (err) {
-            console.error("Database error:", err);
-            return res.status(500).json({ success: false, message: err.message });
-          }
-          
-          console.log("✅ ITEM UPDATED SUCCESSFULLY!");
-          console.log("Product Code Updated:", product_code);
-          
-          res.json({ 
-            success: true, 
-            message: "Item updated",
-            product_code: product_code 
+  if (!product_code || !name || !price) {
+    return res.status(400).json({
+      success: false,
+      message: "Product code, name, and price are required",
+    });
+  }
+
+  // Fetch current image
+  const sqlGet = "SELECT image FROM items WHERE id = ?";
+  db.query(sqlGet, [id], (err, result) => {
+    if (err) {
+      console.error("Database error:", err);
+      return res.status(500).json({
+        success: false,
+        message: "Database error",
+      });
+    }
+
+    if (result.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Item not found",
+      });
+    }
+
+    const existingImage = result[0]?.image;
+
+    // Keep old image if no new one is provided
+    const finalImage = image && image.trim() !== "" ? image : existingImage;
+
+    // UPDATE ITEM WITHOUT CHECKING FOR DUPLICATE PRODUCT CODES
+    const sqlUpdate = `
+      UPDATE items 
+      SET product_code=?, name=?, category=?, description_type=?, price=?, image=?
+      WHERE id=?
+    `;
+
+    db.query(
+      sqlUpdate,
+      [product_code, name, category, description_type, price, finalImage, id],
+      (err3, results) => {
+        if (err3) {
+          console.error("Update failed:", err3);
+          return res.status(500).json({
+            success: false,
+            message: "Update failed",
           });
         }
-      );
-    }
-  );
-});
 
-// ------------------ ADDONS & UPGRADES ------------------
-// Get all addons
-app.get("/addons", (req, res) => {
-  db.execute("SELECT * FROM addons ORDER BY name", (err, results) => {
-    if (err)
-      return res.status(500).json({ success: false, message: err.message });
-    res.json(results);
+        console.log("✅ ITEM UPDATED SUCCESSFULLY!");
+        console.log("Updated item ID:", id);
+        console.log("Product Code:", product_code);
+
+        res.json({
+          success: true,
+          message: "Item updated successfully",
+          id: parseInt(id),
+        });
+      }
+    );
   });
 });
 
-// Get all upgrades
-app.get("/upgrades", (req, res) => {
-  db.execute("SELECT * FROM upgrades ORDER BY name", (err, results) => {
-    if (err)
-      return res.status(500).json({ success: false, message: err.message });
-    res.json(results);
-  });
-});
-
-// Get addons for specific item
-app.get("/items/:id/addons", (req, res) => {
+// DELETE ITEM ROUTE
+app.delete("/items/:id", (req, res) => {
   const { id } = req.params;
-  const query = `
-    SELECT a.* FROM addons a
-    INNER JOIN item_addons ia ON a.id = ia.addon_id
-    WHERE ia.item_id = ?
-    ORDER BY a.name
-  `;
-  db.execute(query, [id], (err, results) => {
-    if (err)
+
+  console.log("=== BACKEND: DELETING ITEM ===");
+  console.log("Item ID to delete:", id);
+
+  db.execute("DELETE FROM items WHERE id = ?", [id], (err, results) => {
+    if (err) {
+      console.error("Database error:", err);
       return res.status(500).json({ success: false, message: err.message });
-    res.json(results);
+    }
+
+    if (results.affectedRows === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Item not found",
+      });
+    }
+
+    console.log("✅ ITEM DELETED SUCCESSFULLY!");
+    console.log("Deleted item ID:", id);
+
+    res.json({
+      success: true,
+      message: "Item deleted successfully",
+      deletedId: id,
+    });
   });
 });
 
-// Get upgrades for specific item
-app.get("/items/:id/upgrades", (req, res) => {
-  const { id } = req.params;
+// ------------------ STORE HOURS LOGS ------------------
+app.get("/store-hours-logs", (req, res) => {
   const query = `
-    SELECT u.* FROM upgrades u
-    INNER JOIN item_upgrades iu ON u.id = iu.upgrade_id
-    WHERE iu.item_id = ?
-    ORDER BY u.name
+    SELECT 
+      shl.*,
+      u.email as user_email
+    FROM store_hours_logs shl
+    LEFT JOIN users u ON shl.user_id = u.id
+    ORDER BY shl.timestamp DESC
   `;
-  db.execute(query, [id], (err, results) => {
-    if (err)
-      return res.status(500).json({ success: false, message: err.message });
+
+  db.execute(query, (err, results) => {
+    if (err) {
+      console.error("Error fetching store hours logs:", err);
+      return res.status(500).json({
+        success: false,
+        message: "Error fetching store hours logs",
+      });
+    }
     res.json(results);
   });
-});
-
-// Add new addon
-app.post("/addons", (req, res) => {
-  const { name, price } = req.body;
-  if (!name || !price) {
-    return res
-      .status(400)
-      .json({ success: false, message: "Name and price are required" });
-  }
-  db.execute(
-    "INSERT INTO addons (name, price) VALUES (?, ?)",
-    [name, price],
-    (err, results) => {
-      if (err)
-        return res.status(500).json({ success: false, message: err.message });
-      res.status(201).json({ success: true, addonId: results.insertId });
-    }
-  );
-});
-
-// Add new upgrade
-app.post("/upgrades", (req, res) => {
-  const { name, price } = req.body;
-  if (!name || !price) {
-    return res
-      .status(400)
-      .json({ success: false, message: "Name and price are required" });
-  }
-  db.execute(
-    "INSERT INTO upgrades (name, price) VALUES (?, ?)",
-    [name, price],
-    (err, results) => {
-      if (err)
-        return res.status(500).json({ success: false, message: err.message });
-      res.status(201).json({ success: true, upgradeId: results.insertId });
-    }
-  );
-});
-
-// Link addon to item
-app.post("/items/:id/addons/:addonId", (req, res) => {
-  const { id, addonId } = req.params;
-  db.execute(
-    "INSERT INTO item_addons (item_id, addon_id) VALUES (?, ?)",
-    [id, addonId],
-    (err, results) => {
-      if (err)
-        return res.status(500).json({ success: false, message: err.message });
-      res.status(201).json({ success: true });
-    }
-  );
-});
-
-// Link upgrade to item
-app.post("/items/:id/upgrades/:upgradeId", (req, res) => {
-  const { id, upgradeId } = req.params;
-  db.execute(
-    "INSERT INTO item_upgrades (item_id, upgrade_id) VALUES (?, ?)",
-    [id, upgradeId],
-    (err, results) => {
-      if (err)
-        return res.status(500).json({ success: false, message: err.message });
-      res.status(201).json({ success: true });
-    }
-  );
 });
 
 // ------------------ ORDERS ------------------
@@ -580,6 +527,7 @@ app.post("/store-hours/log-store-action", async (req, res) => {
         success: true,
         message: `Store ${action} logged successfully`,
         logId: result.insertId,
+        timestamp: new Date().toISOString(),
       });
     });
   } catch (error) {
@@ -613,6 +561,17 @@ app.get("/store-hours/current-store-status", async (req, res) => {
   }
 });
 
+// ------------------ ALL ITEMS (NO FILTER) ------------------
+app.get("/all-items", (req, res) => {
+  const query = "SELECT * FROM items ORDER BY created_at DESC";
+
+  db.execute(query, (err, results) => {
+    if (err)
+      return res.status(500).json({ success: false, message: err.message });
+    res.json(results);
+  });
+});
+
 // ------------------ Test ------------------
 app.get("/", (req, res) => {
   res.json({
@@ -629,7 +588,12 @@ app.get("/", (req, res) => {
         update: "PUT /announcements/:id",
         delete: "DELETE /announcements/:id",
       },
-      items: "GET /items",
+      items: {
+        get: "GET /items",
+        create: "POST /items",
+        update: "PUT /items/:id",
+        delete: "DELETE /items/:id",
+      },
       addons: {
         get: "GET /addons",
         create: "POST /addons",

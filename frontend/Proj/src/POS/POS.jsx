@@ -22,14 +22,19 @@ const FoodHubPOS = () => {
   const [showReceiptModal, setShowReceiptModal] = useState(false);
   const [receiptContent, setReceiptContent] = useState("");
   const [storeOpen, setStoreOpen] = useState(false);
+  const [lastActionTime, setLastActionTime] = useState(null);
 
   const [paymentMethod, setPaymentMethod] = useState("Cash");
 
   const [showAddonsModal, setShowAddonsModal] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [selectedAddons, setSelectedAddons] = useState([]);
-  const [selectedUpgrades, setSelectedUpgrades] = useState([]);
+  const [selectedUpgrades, setSelectedUpgrades] = useState(null);
   const [specialInstructions, setSpecialInstructions] = useState("");
+
+  // BAGO: State para sa success modal ng store open
+  const [showStoreSuccessModal, setShowStoreSuccessModal] = useState(false);
+  const [storeActionTime, setStoreActionTime] = useState("");
 
   const receiptRef = useRef();
   const [currentTime, setCurrentTime] = useState(new Date());
@@ -50,38 +55,59 @@ const FoodHubPOS = () => {
     fetchUpgrades();
   }, []);
 
-const fetchProducts = async () => {
-  try {
-    // Add query parameter to fetch only k-street food
-    const res = await axios.get(
-      "http://localhost:3002/items?description_type=k-street food"
-    );
-    const productsWithNumberPrice = res.data.map((product) => ({
-      ...product,
-      price: Number(product.price) || 0,
-    }));
-    setProducts(productsWithNumberPrice);
-    setCategories(["All", ...new Set(res.data.map((p) => p.category))]);
-  } catch (err) {
-    console.error("Failed to fetch products:", err);
-  }
-};
-
-  const fetchAddons = async () => {
+  const fetchProducts = async () => {
     try {
-      const res = await axios.get("http://localhost:3002/addons");
-      setAddons(res.data);
+      const res = await axios.get("http://localhost:3002/items");
+      const productsWithNumberPrice = res.data.map((product) => ({
+        ...product,
+        price: Number(product.price) || 0,
+      }));
+      setProducts(productsWithNumberPrice);
+      setCategories(["All", ...new Set(res.data.map((p) => p.category))]);
     } catch (err) {
-      console.error("Failed to fetch addons:", err);
+      console.error("Failed to fetch products:", err);
     }
   };
 
+  // Fetch addons na "k-street add sides" lang
+  const fetchAddons = async () => {
+    try {
+      const res = await axios.get("http://localhost:3002/all-items");
+      // Filter only items with description_type = "k-street add sides"
+      const addonsItems = res.data.filter(
+        (item) => item.description_type === "k-street add sides"
+      );
+      setAddons(addonsItems);
+    } catch (err) {
+      console.error("Failed to fetch addons:", err);
+      // Fallback: try the regular addons endpoint
+      try {
+        const fallbackRes = await axios.get("http://localhost:3002/addons");
+        setAddons(fallbackRes.data);
+      } catch (fallbackErr) {
+        console.error("Failed to fetch fallback addons:", fallbackErr);
+      }
+    }
+  };
+
+  // BAGO: Fetch upgrades na kaparehas ng product_code pero "k-street upgrades" ang description_type
   const fetchUpgrades = async () => {
     try {
-      const res = await axios.get("http://localhost:3002/upgrades");
-      setUpgrades(res.data);
+      const res = await axios.get("http://localhost:3002/all-items");
+      // Filter only items with description_type = "k-street upgrades"
+      const upgradesItems = res.data.filter(
+        (item) => item.description_type === "k-street upgrades"
+      );
+      setUpgrades(upgradesItems);
     } catch (err) {
       console.error("Failed to fetch upgrades:", err);
+      // Fallback: try the regular upgrades endpoint
+      try {
+        const fallbackRes = await axios.get("http://localhost:3002/upgrades");
+        setUpgrades(fallbackRes.data);
+      } catch (fallbackErr) {
+        console.error("Failed to fetch fallback upgrades:", fallbackErr);
+      }
     }
   };
 
@@ -91,12 +117,16 @@ const fetchProducts = async () => {
         "http://localhost:3002/store-hours/current-store-status"
       );
       setStoreOpen(res.data.isOpen);
+      if (res.data.lastAction) {
+        setLastActionTime(res.data.lastAction.timestamp);
+      }
     } catch (error) {
       console.error("Error checking store status:", error);
       setStoreOpen(false);
     }
   };
 
+  // BAGO: COMPLETE handleStoreToggle function
   const handleStoreToggle = async () => {
     const user = JSON.parse(localStorage.getItem("user"));
     if (!user) {
@@ -108,16 +138,44 @@ const fetchProducts = async () => {
     const action = newStatus ? "open" : "close";
 
     try {
-      await axios.post("http://localhost:3002/store-hours/log-store-action", {
-        userId: user.id,
-        userEmail: user.email,
-        action: action,
-      });
+      const response = await axios.post(
+        "http://localhost:3002/store-hours/log-store-action",
+        {
+          userId: user.id,
+          userEmail: user.email,
+          action: action,
+        }
+      );
+
       setStoreOpen(newStatus);
+      setLastActionTime(new Date().toISOString());
+
+      // Ipakita ang success modal para sa both open at close
+      const actionTime = new Date().toLocaleTimeString("en-US", {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: true,
+      });
+      setStoreActionTime(actionTime);
+      setShowStoreSuccessModal(true);
     } catch (error) {
       console.error("Error updating store status:", error);
       alert("Failed to update store status");
     }
+  };
+
+  // Format time display
+  const formatStoreTime = (timestamp) => {
+    if (!timestamp) return "N/A";
+
+    const date = new Date(timestamp);
+    return date.toLocaleTimeString("en-US", {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: true,
+    });
   };
 
   // Filter products
@@ -132,9 +190,17 @@ const fetchProducts = async () => {
 
   // --- Cart functions ---
   const addToCart = (product) => {
+    // Check kung closed ang store
+    if (!storeOpen) {
+      alert(
+        "Store is currently closed. Please open the store first before adding items to cart."
+      );
+      return;
+    }
+
     setSelectedProduct(product);
     setSelectedAddons([]);
-    setSelectedUpgrades([]);
+    setSelectedUpgrades(null);
     setSpecialInstructions("");
     setShowAddonsModal(true);
   };
@@ -147,7 +213,7 @@ const fetchProducts = async () => {
       quantity: 1,
       price: Number(selectedProduct.price) || 0,
       selectedAddons: [...selectedAddons],
-      selectedUpgrades: [...selectedUpgrades],
+      selectedUpgrade: selectedUpgrades,
       specialInstructions: specialInstructions,
       finalPrice: calculateFinalPrice(
         selectedProduct,
@@ -161,8 +227,10 @@ const fetchProducts = async () => {
         item.id === cartItem.id &&
         JSON.stringify(item.selectedAddons) ===
           JSON.stringify(cartItem.selectedAddons) &&
-        JSON.stringify(item.selectedUpgrades) ===
-          JSON.stringify(cartItem.selectedUpgrades) &&
+        ((!item.selectedUpgrade && !cartItem.selectedUpgrade) ||
+          (item.selectedUpgrade &&
+            cartItem.selectedUpgrade &&
+            item.selectedUpgrade.id === cartItem.selectedUpgrade.id)) &&
         item.specialInstructions === cartItem.specialInstructions
     );
 
@@ -176,9 +244,11 @@ const fetchProducts = async () => {
 
     setShowAddonsModal(false);
     setSelectedProduct(null);
+    setSelectedUpgrades(null);
   };
 
-  const calculateFinalPrice = (product, addons, upgrades) => {
+  // BAGO: Calculate final price with upgrades (REPLACE price, not add)
+  const calculateFinalPrice = (product, addons, selectedUpgrade) => {
     let finalPrice = Number(product.price) || 0;
 
     // Add cost for selected addons
@@ -186,10 +256,14 @@ const fetchProducts = async () => {
       finalPrice += Number(addon.price) || 0;
     });
 
-    // Add cost for selected upgrades
-    upgrades.forEach((upgrade) => {
-      finalPrice += Number(upgrade.price) || 0;
-    });
+    // REPLACE the base price if upgrade is selected
+    if (selectedUpgrade) {
+      finalPrice = Number(selectedUpgrade.price) || 0;
+      // Still add addons cost on top of the upgraded price
+      addons.forEach((addon) => {
+        finalPrice += Number(addon.price) || 0;
+      });
+    }
 
     return finalPrice;
   };
@@ -225,21 +299,34 @@ const fetchProducts = async () => {
       0
     );
 
+  // Calculate change based on entered payment amount
+  const calculateChange = () => {
+    const amount = parseFloat(paymentAmount) || 0;
+    const total = calculateTotal();
+    return amount > 0 ? amount - total : 0;
+  };
+
   const calculateTotal = () => {
     const subtotal = calculateSubtotal();
-    const tax = subtotal * 0.12;
-    let total = subtotal + tax;
+    let total = subtotal;
     if (discountApplied) total *= 0.8;
     return total;
   };
 
   const subtotal = calculateSubtotal();
-  const tax = subtotal * 0.12;
   const total = calculateTotal();
-  const taxPercentage = subtotal > 0 ? (tax / subtotal) * 100 : 0;
+  const change = calculateChange();
 
   // --- Payment ---
   const handlePayment = async () => {
+    // Check kung closed ang store
+    if (!storeOpen) {
+      alert(
+        "Store is currently closed. Please open the store first before processing payments."
+      );
+      return;
+    }
+
     const amount = parseFloat(paymentAmount);
 
     if (!paymentAmount || amount <= 0 || isNaN(amount)) {
@@ -254,7 +341,6 @@ const fetchProducts = async () => {
     }
 
     const currentSubtotal = calculateSubtotal();
-    const currentTax = currentSubtotal * 0.12;
     const currentTotal = calculateTotal();
 
     if (amount < currentTotal) {
@@ -272,48 +358,53 @@ const fetchProducts = async () => {
     setChangeAmount(change);
 
     const receipt = `
-FOOD HUB RECEIPT
-=============================
-Order Type: ${orderType}
-Payment Method: ${paymentMethod}
-Date: ${new Date().toLocaleString()}
+  K - Street 
+  Mc Arthur Highway,
+  Magaspac, Gerona, Tarlac
 
-Items:
-${cart
-  .map(
-    (item) =>
-      `${item.name} x${item.quantity} - P${(
-        (item.finalPrice || Number(item.price) || 0) * item.quantity
-      ).toFixed(2)}${
-        item.selectedAddons.length > 0
-          ? `\n  Add-ons: ${item.selectedAddons
-              .map((a) => `${a.name} (+P${a.price})`)
-              .join(", ")}`
-          : ""
-      }${
-        item.selectedUpgrades.length > 0
-          ? `\n  Upgrades: ${item.selectedUpgrades
-              .map((u) => `${u.name} (+P${u.price})`)
-              .join(", ")}`
-          : ""
-      }${
-        item.specialInstructions
-          ? `\n  Instructions: ${item.specialInstructions}`
-          : ""
-      }`
-  )
-  .join("\n")}
+  =============================
+  Cashier: ${JSON.parse(localStorage.getItem("user"))?.email || "N/A"}
+  Order Type: ${orderType}
+  Payment Method: ${paymentMethod}
+  Date: ${new Date().toLocaleString()}
 
-Subtotal: P${currentSubtotal.toFixed(2)}
-Tax: P${currentTax.toFixed(2)}
-${discountApplied ? "Discount (20%): Applied\n" : ""}
-Total: P${currentTotal.toFixed(2)}
-Payment Method: ${paymentMethod}
-Amount Paid: P${amount.toFixed(2)}
-Change: P${change.toFixed(2)}
+  Items:
+  ${cart
+    .map(
+      (item) =>
+        `${
+          item.selectedUpgrade
+            ? `[UPGRADED] ${item.selectedUpgrade.name}`
+            : item.name
+        } x${item.quantity} - P${(
+          (item.finalPrice || Number(item.price) || 0) * item.quantity
+        ).toFixed(2)}${
+          item.selectedAddons.length > 0
+            ? `\n  Add-ons: ${item.selectedAddons
+                .map((a) => `${a.name} (+P${a.price})`)
+                .join(", ")}`
+            : ""
+        }${
+          item.selectedUpgrade
+            ? `\n  Upgrade: ${item.selectedUpgrade.name} (P${item.selectedUpgrade.price})`
+            : ""
+        }${
+          item.specialInstructions
+            ? `\n  Instructions: ${item.specialInstructions}`
+            : ""
+        }`
+    )
+    .join("\n")}
 
-Thank you for your order!
-`;
+  Subtotal: P${currentSubtotal.toFixed(2)}
+  ${discountApplied ? "Discount (20%): Applied\n" : ""}
+  Total: P${currentTotal.toFixed(2)}
+  Payment Method: ${paymentMethod}
+  Amount Paid: P${amount.toFixed(2)}
+  Change: P${change.toFixed(2)}
+
+  Thank you for your order!
+  `;
 
     setReceiptContent(receipt);
 
@@ -331,17 +422,26 @@ Thank you for your order!
     }
 
     try {
-      const productNames = cart.map((item) => item.name).join(", ");
+      const productNames = cart
+        .map((item) =>
+          item.selectedUpgrade
+            ? `[UPGRADED] ${item.selectedUpgrade.name}`
+            : item.name
+        )
+        .join(", ");
+
       const itemsData = JSON.stringify(
         cart.map((item) => ({
           id: item.id,
-          name: item.name,
+          name: item.selectedUpgrade
+            ? `[UPGRADED] ${item.selectedUpgrade.name}`
+            : item.name,
           quantity: item.quantity,
           price: item.finalPrice || item.price,
           subtotal:
             (item.finalPrice || Number(item.price) || 0) * item.quantity,
           selectedAddons: item.selectedAddons,
-          selectedUpgrades: item.selectedUpgrades,
+          selectedUpgrade: item.selectedUpgrade,
           specialInstructions: item.specialInstructions,
         }))
       );
@@ -388,344 +488,56 @@ Thank you for your order!
 
   // --- Print Receipt ---
   const handlePrintReceipt = () => {
-    const currentSubtotal = calculateSubtotal();
-    const currentTax = currentSubtotal * 0.12;
-    const currentTotal = calculateTotal();
-    const currentAmountPaid = parseFloat(paymentAmount) || 0;
-    const currentChange = currentAmountPaid - currentTotal;
-
-    const printWindow = window.open("", "PRINT", "height=600,width=400");
-
-    printWindow.document.write(`
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <title>Receipt</title>
-      <style>
-        body {
-          font-family: 'Courier New', monospace;
-          margin: 0;
-          padding: 20px;
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          justify-content: center;
-          min-height: 100vh;
-          font-size: 14px;
-          background: white;
-          line-height: 1.4;
-        }
-        .receipt-container {
-          text-align: center;
-          width: 280px;
-          max-width: 100%;
-        }
-        .receipt-header {
-          font-weight: bold;
-          font-size: 18px;
-          margin-bottom: 10px;
-          border-bottom: 2px dashed #000;
-          padding-bottom: 8px;
-          width: 100%;
-        }
-        .receipt-content {
-          text-align: center;
-          width: 100%;
-        }
-        .receipt-line {
-          width: 100%;
-          margin: 4px 0;
-          text-align: center;
-        }
-        .items-section {
-          text-align: left;
-          margin: 10px 0;
-          width: 100%;
-        }
-        .item-line {
-          display: flex;
-          justify-content: space-between;
-          margin: 3px 0;
-          font-size: 13px;
-        }
-        .item-details {
-          font-size: 11px;
-          color: #666;
-          margin-left: 10px;
-        }
-        .divider {
-          border-top: 1px dashed #000;
-          margin: 10px 0;
-          width: 100%;
-        }
-        .summary-line {
-          display: flex;
-          justify-content: space-between;
-          margin: 4px 0;
-          font-size: 13px;
-        }
-        .total-line {
-          display: flex;
-          justify-content: space-between;
-          margin: 8px 0;
-          font-weight: bold;
-          font-size: 15px;
-          border-top: 1px dashed #000;
-          padding-top: 8px;
-        }
-        @media print {
-          body {
-            padding: 15px;
-          }
-          .receipt-container {
-            width: 270px !important;
-          }
-        }
-      </style>
-    </head>
-    <body>
-      <div class="receipt-container">
-        <div class="receipt-header">FOOD HUB RECEIPT</div>
-        <div class="receipt-content">
-          <div class="receipt-line">Order Type: ${orderType}</div>
-          <div class="receipt-line">Payment Method: ${paymentMethod}</div>
-          <div class="receipt-line">Date: ${new Date().toLocaleString()}</div>
-          <div class="divider"></div>
-          <div class="receipt-line" style="font-weight: bold; text-align: left;">ITEMS:</div>
-          <div class="items-section">
-            ${
-              cart.length > 0
-                ? cart
-                    .map(
-                      (item) => `
-                  <div class="item-line">
-                    <div style="flex: 1;">
-                      <div>${item.name} x${item.quantity}</div>
-                      ${
-                        item.selectedAddons.length > 0
-                          ? `<div class="item-details">Add-ons: ${item.selectedAddons
-                              .map((a) => `${a.name} (+P${a.price})`)
-                              .join(", ")}</div>`
-                          : ""
-                      }
-                      ${
-                        item.selectedUpgrades.length > 0
-                          ? `<div class="item-details">Upgrades: ${item.selectedUpgrades
-                              .map((u) => `${u.name} (+P${u.price})`)
-                              .join(", ")}</div>`
-                          : ""
-                      }
-                      ${
-                        item.specialInstructions
-                          ? `<div class="item-details">Instructions: ${item.specialInstructions}</div>`
-                          : ""
-                      }
-                    </div>
-                    <span>P${(
-                      (item.finalPrice || Number(item.price) || 0) *
-                      item.quantity
-                    ).toFixed(2)}</span>
-                  </div>
-                `
-                    )
-                    .join("")
-                : '<div class="receipt-line">No items</div>'
-            }
-          </div>
-          <div class="divider"></div>
-          <div class="summary-line">
-            <span>Subtotal:</span>
-            <span>P${currentSubtotal.toFixed(2)}</span>
-          </div>
-          <div class="summary-line">
-            <span>Tax:</span>
-            <span>P${currentTax.toFixed(2)}</span>
-          </div>
-          ${
-            discountApplied
-              ? `
-          <div class="summary-line">
-            <span>Discount (20%):</span>
-            <span>Applied</span>
-          </div>
-          `
-              : ""
-          }
-          <div class="total-line">
-            <span>Total:</span>
-            <span>P${currentTotal.toFixed(2)}</span>
-          </div>
-          <div class="summary-line">
-            <span>Payment Method:</span>
-            <span>${paymentMethod}</span>
-          </div>
-          <div class="summary-line">
-            <span>Amount Paid:</span>
-            <span>P${currentAmountPaid.toFixed(2)}</span>
-          </div>
-          <div class="summary-line">
-            <span>Change:</span>
-            <span>P${currentChange.toFixed(2)}</span>
-          </div>
-          <div class="divider"></div>
-          <div class="receipt-line" style="font-weight: bold; margin-top: 15px;">
-            Thank you for your order!
-          </div>
-        </div>
-      </div>
-    </body>
-    </html>
-  `);
-
-    printWindow.document.close();
-    printWindow.focus();
-
-    setTimeout(() => {
-      printWindow.print();
-      printWindow.close();
-    }, 500);
+    const receiptElement = receiptRef.current;
+    if (receiptElement) {
+      const printWindow = window.open("", "_blank");
+      printWindow.document.write(`
+        <html>
+          <head>
+            <title>Receipt</title>
+            <style>
+              body { 
+                font-family: 'Courier New', monospace; 
+                margin: 20px;
+                text-align: center;
+              }
+              pre { 
+                white-space: pre-wrap; 
+                text-align: center;
+              }
+              @media print {
+                body { margin: 0; }
+              }
+            </style>
+          </head>
+          <body>
+            <pre>${receiptContent}</pre>
+            <script>
+              window.onload = function() {
+                window.print();
+                setTimeout(function() {
+                  window.close();
+                }, 1000);
+              }
+            </script>
+          </body>
+        </html>
+      `);
+      printWindow.document.close();
+    }
   };
 
   // --- Save Receipt as PNG ---
   const handleSaveReceiptAsImage = () => {
-    const currentSubtotal = calculateSubtotal();
-    const currentTax = currentSubtotal * 0.12;
-    const currentTotal = calculateTotal();
-    const currentAmountPaid = parseFloat(paymentAmount) || 0;
-    const currentChange = currentAmountPaid - currentTotal;
-
-    const receiptElement = document.createElement("div");
-    receiptElement.style.position = "fixed";
-    receiptElement.style.top = "0";
-    receiptElement.style.left = "0";
-    receiptElement.style.width = "300px";
-    receiptElement.style.padding = "25px 20px";
-    receiptElement.style.background = "white";
-    receiptElement.style.fontFamily = "'Courier New', monospace";
-    receiptElement.style.fontSize = "14px";
-    receiptElement.style.lineHeight = "1.4";
-    receiptElement.style.textAlign = "center";
-    receiptElement.style.border = "2px solid #000";
-    receiptElement.style.zIndex = "9999";
-    receiptElement.style.display = "flex";
-    receiptElement.style.flexDirection = "column";
-    receiptElement.style.alignItems = "center";
-    receiptElement.style.justifyContent = "center";
-    receiptElement.style.minHeight = "450px";
-    receiptElement.style.color = "black";
-
-    receiptElement.innerHTML = `
-    <div style="text-align: center; width: 100%;">
-      <div style="font-weight: bold; font-size: 18px; margin-bottom: 12px; border-bottom: 2px dashed #000; padding-bottom: 8px;">
-        FOOD HUB RECEIPT
-      </div>
-      <div style="text-align: center; width: 100%;">
-        <div style="margin-bottom: 3px;">Order Type: ${orderType}</div>
-        <div style="margin-bottom: 3px;">Payment Method: ${paymentMethod}</div>
-        <div style="margin-bottom: 15px;">Date: ${new Date().toLocaleString()}</div>
-        <div style="border-top: 1px dashed #000; margin: 12px 0; width: 100%;"></div>
-        <div style="font-weight: bold; text-align: left; margin-bottom: 8px;">ITEMS:</div>
-        <div style="text-align: left; width: 100%; margin-bottom: 15px;">
-          ${
-            cart.length > 0
-              ? cart
-                  .map(
-                    (item) => `
-                <div style="margin: 8px 0;">
-                  <div style="display: flex; justify-content: space-between;">
-                    <span>${item.name} x${item.quantity}</span>
-                    <span>P${(
-                      (item.finalPrice || Number(item.price) || 0) *
-                      item.quantity
-                    ).toFixed(2)}</span>
-                  </div>
-                  ${
-                    item.selectedAddons.length > 0
-                      ? `<div style="font-size: 11px; color: #666; margin-left: 10px;">Add-ons: ${item.selectedAddons
-                          .map((a) => `${a.name} (+P${a.price})`)
-                          .join(", ")}</div>`
-                      : ""
-                  }
-                  ${
-                    item.selectedUpgrades.length > 0
-                      ? `<div style="font-size: 11px; color: #666; margin-left: 10px;">Upgrades: ${item.selectedUpgrades
-                          .map((u) => `${u.name} (+P${u.price})`)
-                          .join(", ")}</div>`
-                      : ""
-                  }
-                  ${
-                    item.specialInstructions
-                      ? `<div style="font-size: 11px; color: #666; margin-left: 10px;">Instructions: ${item.specialInstructions}</div>`
-                      : ""
-                  }
-                </div>
-              `
-                  )
-                  .join("")
-              : '<div style="text-align: center;">No items</div>'
-          }
-        </div>
-        <div style="border-top: 1px dashed #000; margin: 12px 0; width: 100%;"></div>
-        <div style="display: flex; justify-content: space-between; margin: 5px 0;">
-          <span>Subtotal:</span>
-          <span>P${currentSubtotal.toFixed(2)}</span>
-        </div>
-        <div style="display: flex; justify-content: space-between; margin: 5px 0;">
-          <span>Tax:</span>
-          <span>P${currentTax.toFixed(2)}</span>
-        </div>
-        ${
-          discountApplied
-            ? `
-        <div style="display: flex; justify-content: space-between; margin: 5px 0;">
-          <span>Discount (20%):</span>
-          <span>Applied</span>
-        </div>
-        `
-            : ""
-        }
-        <div style="display: flex; justify-content: space-between; margin: 8px 0; font-weight: bold; font-size: 16px; border-top: 1px dashed #000; padding-top: 8px;">
-          <span>Total:</span>
-          <span>P${currentTotal.toFixed(2)}</span>
-        </div>
-        <div style="display: flex; justify-content: space-between; margin: 5px 0;">
-          <span>Payment Method:</span>
-          <span>${paymentMethod}</span>
-        </div>
-        <div style="display: flex; justify-content: space-between; margin: 5px 0;">
-          <span>Amount Paid:</span>
-          <span>P${currentAmountPaid.toFixed(2)}</span>
-        </div>
-        <div style="display: flex; justify-content: space-between; margin: 5px 0;">
-          <span>Change:</span>
-          <span>P${currentChange.toFixed(2)}</span>
-        </div>
-        <div style="border-top: 1px dashed #000; margin: 15px 0; width: 100%;"></div>
-        <div style="font-weight: bold; margin-top: 10px;">
-          Thank you for your order!
-        </div>
-      </div>
-    </div>
-  `;
-
-    document.body.appendChild(receiptElement);
-
-    const dynamicHeight = Math.max(450, receiptElement.scrollHeight);
-
-    html2canvas(receiptElement, {
-      width: 300,
-      height: dynamicHeight,
-      scale: 2,
-      logging: false,
-      useCORS: true,
-      backgroundColor: "#ffffff",
-    }).then((canvas) => {
-      const link = document.createElement("a");
-      link.download = `receipt_${Date.now()}.png`;
-      link.href = canvas.toDataURL("image/png");
-      link.click();
-      document.body.removeChild(receiptElement);
-    });
+    const receiptElement = receiptRef.current;
+    if (receiptElement) {
+      html2canvas(receiptElement).then((canvas) => {
+        const link = document.createElement("a");
+        link.download = `receipt-${new Date().getTime()}.png`;
+        link.href = canvas.toDataURL();
+        link.click();
+      });
+    }
   };
 
   // Handle addon selection
@@ -737,12 +549,14 @@ Thank you for your order!
     }
   };
 
-  // Handle upgrade selection
+  // BAGO: Handle upgrade selection (REPLACE, not add to array)
   const handleUpgradeToggle = (upgrade) => {
-    if (selectedUpgrades.find((u) => u.id === upgrade.id)) {
-      setSelectedUpgrades(selectedUpgrades.filter((u) => u.id !== upgrade.id));
+    if (selectedUpgrades && selectedUpgrades.id === upgrade.id) {
+      // If same upgrade is clicked again, deselect it
+      setSelectedUpgrades(null);
     } else {
-      setSelectedUpgrades([...selectedUpgrades, upgrade]);
+      // Replace with the new upgrade
+      setSelectedUpgrades(upgrade);
     }
   };
 
@@ -754,15 +568,7 @@ Thank you for your order!
     );
   };
 
-  // Calculate total upgrades price
-  const calculateUpgradesTotal = () => {
-    return selectedUpgrades.reduce(
-      (total, upgrade) => total + Number(upgrade.price),
-      0
-    );
-  };
-
-  // Filter addons and upgrades by product category
+  // Filter addons by product category
   const getFilteredAddons = () => {
     if (!selectedProduct) return [];
     return addons.filter(
@@ -772,12 +578,13 @@ Thank you for your order!
     );
   };
 
+  // BAGO: Filter upgrades by matching product_code
   const getFilteredUpgrades = () => {
     if (!selectedProduct) return [];
+
+    // Find upgrades that have the SAME product_code as the selected product
     return upgrades.filter(
-      (upgrade) =>
-        upgrade.category === selectedProduct.category ||
-        upgrade.category === "General"
+      (upgrade) => upgrade.product_code === selectedProduct.product_code
     );
   };
 
@@ -791,7 +598,7 @@ Thank you for your order!
               <h1 className="text-3xl font-bold tracking-tight">
                 Cashier POS System
               </h1>
-              <p className="text-green-100 mt-2 text-sm font-medium">
+              <p className="text-red-100 mt-2 text-sm font-medium">
                 {currentTime.toLocaleDateString("en-US", {
                   year: "numeric",
                   month: "long",
@@ -804,22 +611,25 @@ Thank you for your order!
               </p>
               {/* Store Status */}
               <div className="mt-3 flex items-center gap-3">
-                <span className="text-green-100 text-sm font-medium">
+                <span className="text-red-100 text-sm font-medium">
                   Store Status:
                 </span>
                 <button
                   className={`px-4 py-1.5 rounded-full text-sm font-semibold transition-all shadow-lg ${
                     storeOpen
-                      ? "bg-white text-black hover:bg-green-50"
+                      ? "bg-white text-black hover:bg-red-50"
                       : "bg-black hover:bg-black text-white"
                   }`}
                   onClick={handleStoreToggle}
                 >
                   {storeOpen ? "OPEN" : "CLOSED"}
                 </button>
-                <span className="text-green-100 text-sm">
-                  {storeOpen ? "" : "Store Closed"}
-                </span>
+                {lastActionTime && (
+                  <span className="text-red-100 text-sm">
+                    {storeOpen ? "Opened" : "Closed"} at{" "}
+                    {formatStoreTime(lastActionTime)}
+                  </span>
+                )}
               </div>
             </div>
             <div className="flex gap-3">
@@ -882,12 +692,17 @@ Thank you for your order!
               </div>
             </div>
 
+
             {/* Product Grid */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-5">
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-5 relative">
               {filteredProducts.map((product) => (
                 <div
                   key={product.id}
-                  className="group border-2 border-gray-100 rounded-2xl p-4 hover:shadow-2xl hover:border-red-200 transition-all duration-300 hover:scale-105"
+                  className={`group border-2 rounded-2xl p-4 transition-all duration-300 ${
+                    storeOpen
+                      ? "border-gray-100 hover:shadow-2xl hover:border-red-200 hover:scale-105"
+                      : "border-gray-200 opacity-80"
+                  }`}
                 >
                   {/* Product Image */}
                   <div className="h-40 rounded-xl mb-3 overflow-hidden flex items-center justify-center bg-gradient-to-br from-gray-50 to-gray-100">
@@ -911,13 +726,23 @@ Thank you for your order!
                   </span>
                   <div className="flex justify-between items-center">
                     <span className="text-red-600 font-bold text-xl">
-                      P{((Number(product.price) || 0) * 1.12).toFixed(2)}
+                      P{(Number(product.price) || 0).toFixed(2)}
                     </span>
                     <button
-                      className="bg-gradient-to-r from-red-600 to-red-600 text-white px-5 py-2.5 rounded-xl font-semibold hover:from-black hover:to-black transition-all shadow-lg hover:shadow-xl"
+                      className={`px-5 py-2.5 rounded-xl font-semibold transition-all shadow-lg ${
+                        storeOpen
+                          ? "bg-gradient-to-r from-red-600 to-red-600 text-white hover:from-black hover:to-black hover:shadow-xl"
+                          : "bg-gray-300 text-gray-500 cursor-not-allowed"
+                      }`}
                       onClick={() => addToCart(product)}
+                      disabled={!storeOpen}
+                      title={
+                        !storeOpen
+                          ? "Store is closed - cannot add items"
+                          : "Add to cart"
+                      }
                     >
-                      Add
+                      {storeOpen ? "Add" : "Closed"}
                     </button>
                   </div>
                 </div>
@@ -943,12 +768,19 @@ Thank you for your order!
             <div className="mb-4">
               <button
                 className={`w-full py-3.5 rounded-xl font-semibold text-white transition-all shadow-lg ${
-                  discountApplied
+                  discountApplied || !storeOpen
                     ? "bg-gray-300 cursor-not-allowed"
                     : "bg-black hover:shadow-xl"
                 }`}
                 onClick={applyDiscount}
-                disabled={discountApplied}
+                disabled={discountApplied || !storeOpen}
+                title={
+                  !storeOpen
+                    ? "Store is closed"
+                    : discountApplied
+                    ? "Discount already applied"
+                    : "Apply discount"
+                }
               >
                 {discountApplied
                   ? "Discount Applied (20%)"
@@ -974,7 +806,11 @@ Thank you for your order!
                       className="flex justify-between items-center border-b border-gray-100 pb-4 last:border-b-0 hover:bg-red-50 p-3 rounded-xl transition-all"
                     >
                       <div className="flex-1">
-                        <p className="font-bold text-gray-800">{item.name}</p>
+                        <p className="font-bold text-gray-800">
+                          {item.selectedUpgrade
+                            ? `[UPGRADED] ${item.selectedUpgrade.name}`
+                            : item.name}
+                        </p>
                         <p className="text-sm text-gray-600 mt-0.5">
                           P
                           {(item.finalPrice || Number(item.price) || 0).toFixed(
@@ -990,12 +826,9 @@ Thank you for your order!
                               .join(", ")}
                           </p>
                         )}
-                        {item.selectedUpgrades.length > 0 && (
-                          <p className="text-xs text-gray-500">
-                            Upgrades:{" "}
-                            {item.selectedUpgrades
-                              .map((u) => `${u.name} (+P${u.price})`)
-                              .join(", ")}
+                        {item.selectedUpgrade && (
+                          <p className="text-xs text-green-600 font-semibold">
+                            Upgrade: {item.selectedUpgrade.name}
                           </p>
                         )}
                         {item.specialInstructions && (
@@ -1051,19 +884,19 @@ Thank you for your order!
                   <span className="font-medium">Subtotal</span>
                   <span className="font-semibold">P{subtotal.toFixed(2)}</span>
                 </div>
-                <div className="flex justify-between text-gray-700">
-                  <span className="font-medium">
-                    Vat({taxPercentage.toFixed(1)}%)
-                  </span>
-                  <span className="font-semibold">P{tax.toFixed(2)}</span>
-                </div>
                 {discountApplied && (
                   <div className="flex justify-between text-amber-600 font-bold bg-amber-50 p-2 rounded-lg">
                     <span>Discount (20%)</span>
-                    <span>-P{((subtotal + tax) * 0.2).toFixed(2)}</span>
+                    <span>-P{(subtotal * 0.2).toFixed(2)}</span>
                   </div>
                 )}
-                <div className="flex justify-between font-bold text-xl border-t-2 border-gray-200 pt-4 text-gray-900">
+                <div className="flex justify-between font-bold text-xl  border-gray-200 pt-4 text-gray-900">
+                  <span className="font-bold">Change</span>
+                  <span className="font-semibold text-green-600">
+                    P{change > 0 ? change.toFixed(2) : "0.00"}
+                  </span>
+                </div>
+                <div className="flex justify-between font-bold text-xl  border-gray-200 pt-4 text-gray-900">
                   <span>Total</span>
                   <span className="text-red-600">P{total.toFixed(2)}</span>
                 </div>
@@ -1125,20 +958,35 @@ Thank you for your order!
                 </h1>
                 <div className="grid grid-cols-3 gap-3">
                   <button
-                    className="bg-red-500 text-white py-3.5 rounded-xl font-bold hover:bg-red-600 transition-all shadow-md hover:shadow-lg"
-                    onClick={() => setPaymentAmount("100")}
+                    className={`py-3.5 rounded-xl font-bold transition-all shadow-md hover:shadow-lg ${
+                      storeOpen
+                        ? "bg-red-500 text-white hover:bg-red-600"
+                        : "bg-gray-300 text-gray-500 cursor-not-allowed"
+                    }`}
+                    onClick={() => storeOpen && setPaymentAmount("100")}
+                    disabled={!storeOpen}
                   >
                     P100
                   </button>
                   <button
-                    className="bg-red-500 text-white py-3.5 rounded-xl font-bold hover:bg-red-600 transition-all shadow-md hover:shadow-lg"
-                    onClick={() => setPaymentAmount("500")}
+                    className={`py-3.5 rounded-xl font-bold transition-all shadow-md hover:shadow-lg ${
+                      storeOpen
+                        ? "bg-red-500 text-white hover:bg-red-600"
+                        : "bg-gray-300 text-gray-500 cursor-not-allowed"
+                    }`}
+                    onClick={() => storeOpen && setPaymentAmount("500")}
+                    disabled={!storeOpen}
                   >
                     P500
                   </button>
                   <button
-                    className="bg-red-500 text-white py-3.5 rounded-xl font-bold hover:bg-red-600 transition-all shadow-md hover:shadow-lg"
-                    onClick={() => setPaymentAmount("1000")}
+                    className={`py-3.5 rounded-xl font-bold transition-all shadow-md hover:shadow-lg ${
+                      storeOpen
+                        ? "bg-red-500 text-white hover:bg-red-600"
+                        : "bg-gray-300 text-gray-500 cursor-not-allowed"
+                    }`}
+                    onClick={() => storeOpen && setPaymentAmount("1000")}
+                    disabled={!storeOpen}
                   >
                     P1000
                   </button>
@@ -1150,25 +998,140 @@ Thank you for your order!
                   </label>
                   <input
                     type="number"
-                    className="w-full px-5 py-4 border-2 border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent text-lg font-semibold transition-all"
+                    className={`w-full px-5 py-4 border-2 rounded-xl focus:outline-none focus:ring-2 text-lg font-semibold transition-all ${
+                      storeOpen
+                        ? "border-gray-200 focus:ring-red-500 focus:border-transparent"
+                        : "border-gray-300 bg-gray-100 cursor-not-allowed"
+                    }`}
                     value={paymentAmount}
-                    onChange={(e) => setPaymentAmount(e.target.value)}
+                    onChange={(e) =>
+                      storeOpen && setPaymentAmount(e.target.value)
+                    }
                     placeholder="0.00"
+                    disabled={!storeOpen}
                   />
                 </div>
 
                 <button
                   className="w-full bg-red-500 text-white py-5 rounded-xl font-bold text-lg hover:bg-red-700 transition-all disabled:bg-gray-300 disabled:cursor-not-allowed shadow-xl hover:shadow-2xl"
                   onClick={handlePayment}
-                  disabled={cart.length === 0}
+                  disabled={cart.length === 0 || !storeOpen}
+                  title={
+                    !storeOpen
+                      ? "Store is closed - cannot process payments"
+                      : cart.length === 0
+                      ? "Cart is empty"
+                      : "Process payment"
+                  }
                 >
-                  Process Payment
+                  {storeOpen ? "Process Payment" : "Store Closed"}
                 </button>
               </div>
             </div>
           </div>
         </div>
       </div>
+
+      {showStoreSuccessModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-3xl shadow-2xl max-w-md w-full animate-fadeIn">
+    
+            <div
+              className={`p-6 rounded-t-3xl ${
+                storeOpen
+                  ? "bg-gradient-to-r from-red-600 to-red-500 text-white"
+                  : "bg-gradient-to-r from-black to-black text-white"
+              }`}
+            >
+              <h3 className="text-2xl font-bold">
+                {storeOpen
+                  ? "Store Opened Successfully!"
+                  : "Store Closed Successfully!"}
+              </h3>
+              <p className="opacity-90 mt-1">
+                {storeOpen
+                  ? "Welcome to K-Street POS"
+                  : "Thank you for using K-Street POS"}
+              </p>
+            </div>
+
+            <div className="p-6">
+              <div className="text-center mb-6">
+                {/* Icon - Magkaiba depende sa action */}
+                <div
+                  className={`text-7xl mb-4 ${
+                    storeOpen ? "text-red-500" : "text-gray-500"
+                  }`}
+                >
+                  {storeOpen ? "" : ""}
+                </div>
+
+                <p className="text-gray-700 text-lg font-medium mb-4">
+                  <div className="height 10px">
+                    <img
+                      src="https://github.com/Titusss19/K-STREET/blob/jmbranch/ssbi-white-logo.png?raw=true"
+                      alt=""
+                      height="40"
+                      width="120"
+                      style={{ display: "block", marginLeft: "auto", marginRight: "auto" }}
+                    />
+                  </div>
+                  {storeOpen
+                    ? "Your store is now open for business!"
+                    : "Your store is now closed for the day."}
+                </p>
+
+                {/* Time Display */}
+                <div
+                  className={`border-2 rounded-2xl p-5 mt-4 ${
+                    storeOpen
+                      ? "bg-gradient-to-r from-red-50 to-red-50 border-red-200"
+                      : "bg-gradient-to-r from-gray-50 to-gray-50 border-gray-200"
+                  }`}
+                >
+                  <p
+                    className={`font-semibold text-lg mb-1 ${
+                      storeOpen ? "text-red-800" : "text-gray-800"
+                    }`}
+                  >
+                    Store {storeOpen ? "Opened" : "Closed"} At:
+                  </p>
+                  <p
+                    className={`font-bold text-3xl ${
+                      storeOpen ? "text-red-600" : "text-gray-600"
+                    }`}
+                  >
+                    {storeActionTime}
+                  </p>
+                </div>
+
+                {/* Additional Message */}
+                <div className="mt-4 text-sm text-gray-500">
+                  <p>
+                    {storeOpen
+                      ? "You can now start accepting orders and processing payments."
+                      : "All transactions have been completed. See you tomorrow!"}
+                  </p>
+                </div>
+              </div>
+
+              {/* Modal Footer */}
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setShowStoreSuccessModal(false)}
+                  className={`flex-1 py-3.5 rounded-xl font-semibold transition-all shadow-lg hover:shadow-xl ${
+                    storeOpen
+                      ? "bg-gradient-to-r from-red-500 to-red-600 text-white hover:from-red-600 hover:to-red-700"
+                      : "bg-gradient-to-r from-black to-black text-white hover:from-black hover:to-black"
+                  }`}
+                >
+                  {storeOpen ? "Start Selling!" : "Got It!"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* --- Add-ons Modal --- */}
       {showAddonsModal && selectedProduct && (
@@ -1177,14 +1140,20 @@ Thank you for your order!
             <div className="p-6 bg-gradient-to-r from-red-600 to-red-500 text-white rounded-t-3xl">
               <h3 className="text-2xl font-bold">Customize Your Order</h3>
               <p className="text-red-100 mt-1">{selectedProduct.name}</p>
+              <p className="text-red-100 text-sm">
+                Product Code: {selectedProduct.product_code}
+              </p>
             </div>
 
             <div className="p-6">
-              {/* Add-ons Section */}
+              {/* Add-ons Section (Sides) */}
               <div className="mb-6">
                 <h4 className="text-lg font-bold text-gray-800 mb-3">
-                  Add-ons
+                  Add-ons (Sides)
                 </h4>
+                <p className="text-sm text-gray-500 mb-3">
+                  Available sides that complement your {selectedProduct.name}
+                </p>
                 <div className="grid grid-cols-1 gap-2">
                   {getFilteredAddons().map((addon) => (
                     <button
@@ -1217,25 +1186,28 @@ Thank you for your order!
                   ))}
                   {getFilteredAddons().length === 0 && (
                     <p className="text-gray-500 text-center py-4">
-                      No addons available for this item
+                      No sides available for this item
                     </p>
                   )}
                 </div>
               </div>
 
-              {/* Upgrades Section */}
+              {/* Upgrades Section (BAGO: Single Selection) */}
               <div className="mb-6">
                 <h4 className="text-lg font-bold text-gray-800 mb-3">
                   Upgrades
                 </h4>
+                <p className="text-sm text-gray-500 mb-3">
+                  Upgrade your {selectedProduct.name} to a better version
+                </p>
                 <div className="grid grid-cols-1 gap-2">
                   {getFilteredUpgrades().map((upgrade) => (
                     <button
                       key={upgrade.id}
                       className={`p-3 rounded-xl border-2 transition-all text-left ${
-                        selectedUpgrades.find((u) => u.id === upgrade.id)
-                          ? "bg-blue-100 border-blue-500 text-blue-700"
-                          : "bg-gray-50 border-gray-200 text-gray-700 hover:border-blue-300"
+                        selectedUpgrades && selectedUpgrades.id === upgrade.id
+                          ? "bg-green-100 border-green-500 text-green-700"
+                          : "bg-gray-50 border-gray-200 text-gray-700 hover:border-green-300"
                       }`}
                       onClick={() => handleUpgradeToggle(upgrade)}
                     >
@@ -1243,17 +1215,23 @@ Thank you for your order!
                         <div>
                           <span className="font-medium">{upgrade.name}</span>
                           <span className="text-sm text-gray-500 ml-2">
-                            +₱{Number(upgrade.price).toFixed(2)}
+                            Upgrade to: ₱{Number(upgrade.price).toFixed(2)}
                           </span>
+                          <div className="text-xs text-gray-400 mt-1">
+                            Original: ₱
+                            {Number(selectedProduct.price).toFixed(2)}
+                          </div>
                         </div>
                         <span
                           className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${
-                            selectedUpgrades.find((u) => u.id === upgrade.id)
-                              ? "bg-blue-500 border-blue-500 text-white"
+                            selectedUpgrades &&
+                            selectedUpgrades.id === upgrade.id
+                              ? "bg-green-500 border-green-500 text-white"
                               : "border-gray-300"
                           }`}
                         >
-                          {selectedUpgrades.find((u) => u.id === upgrade.id) &&
+                          {selectedUpgrades &&
+                            selectedUpgrades.id === upgrade.id &&
                             "✓"}
                         </span>
                       </div>
@@ -1261,7 +1239,7 @@ Thank you for your order!
                   ))}
                   {getFilteredUpgrades().length === 0 && (
                     <p className="text-gray-500 text-center py-4">
-                      No upgrades available for this item
+                      No upgrades available for {selectedProduct.name}
                     </p>
                   )}
                 </div>
@@ -1281,27 +1259,32 @@ Thank you for your order!
                 />
               </div>
 
-              {/* Price Summary */}
+              {/* Price Summary (BAGO: Updated for upgrades) */}
               <div className="bg-gray-50 p-4 rounded-xl mb-6">
                 <div className="flex justify-between items-center mb-2">
-                  <span className="text-gray-600">Base Price:</span>
+                  <span className="text-gray-600">
+                    {selectedUpgrades ? "Upgraded Price:" : "Base Price:"}
+                  </span>
                   <span className="font-semibold">
-                    ₱{Number(selectedProduct.price).toFixed(2)}
+                    ₱
+                    {selectedUpgrades
+                      ? Number(selectedUpgrades.price).toFixed(2)
+                      : Number(selectedProduct.price).toFixed(2)}
                   </span>
                 </div>
                 {selectedAddons.length > 0 && (
                   <div className="flex justify-between items-center mb-2">
-                    <span className="text-gray-600">Add-ons:</span>
+                    <span className="text-gray-600">Sides:</span>
                     <span className="font-semibold">
                       +₱{calculateAddonsTotal().toFixed(2)}
                     </span>
                   </div>
                 )}
-                {selectedUpgrades.length > 0 && (
-                  <div className="flex justify-between items-center mb-2">
-                    <span className="text-gray-600">Upgrades:</span>
+                {selectedUpgrades && (
+                  <div className="flex justify-between items-center mb-2 text-green-600">
+                    <span>Upgrade Applied:</span>
                     <span className="font-semibold">
-                      +₱{calculateUpgradesTotal().toFixed(2)}
+                      {selectedUpgrades.name}
                     </span>
                   </div>
                 )}
@@ -1324,7 +1307,7 @@ Thank you for your order!
               <div className="flex gap-3">
                 <button
                   onClick={confirmAddToCart}
-                  className="flex-1 bg-gradient-to-r from-green-600 to-emerald-600 text-white py-3.5 rounded-xl font-semibold hover:from-green-700 hover:to-emerald-700 transition-all shadow-lg hover:shadow-xl"
+                  className="flex-1 bg-gradient-to-r from-red-600 to-red-600 text-white py-3.5 rounded-xl font-semibold hover:from-red-700 hover:to-red-700 transition-all shadow-lg hover:shadow-xl"
                 >
                   Add to Cart
                 </button>
@@ -1332,6 +1315,7 @@ Thank you for your order!
                   onClick={() => {
                     setShowAddonsModal(false);
                     setSelectedProduct(null);
+                    setSelectedUpgrades(null);
                   }}
                   className="flex-1 bg-gray-100 text-gray-700 py-3.5 rounded-xl font-semibold hover:bg-gray-200 transition-all"
                 >
@@ -1347,7 +1331,7 @@ Thank you for your order!
       {showReceiptModal && (
         <div className="fixed inset-0 bg-black bg-opacity-60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-3xl shadow-2xl max-w-md w-full animate-fadeIn">
-            <div className="p-5 bg-gradient-to-r from-green-600 to-emerald-600 text-white rounded-t-3xl flex justify-between items-center">
+            <div className="p-5 bg-gradient-to-r from-red-600 to-red-600 text-white rounded-t-3xl flex justify-between items-center">
               <h3 className="text-2xl font-bold">Receipt</h3>
               <button
                 onClick={() => {
@@ -1374,7 +1358,7 @@ Thank you for your order!
             <div className="p-5 flex gap-3 border-t-2 border-gray-100">
               <button
                 onClick={handlePrintReceipt}
-                className="flex-1 bg-gradient-to-r from-green-600 to-emerald-600 text-white py-3 rounded-xl font-semibold hover:from-green-700 hover:to-emerald-700 transition-all shadow-lg hover:shadow-xl"
+                className="flex-1 bg-gradient-to-r from-red-600 to-red-600 text-white py-3 rounded-xl font-semibold hover:from-red-700 hover:to-red-700 transition-all shadow-lg hover:shadow-xl"
               >
                 Print
               </button>
@@ -1405,7 +1389,7 @@ Thank you for your order!
             <div
               className={`p-6 rounded-t-3xl ${
                 paymentResult.type === "success"
-                  ? "bg-gradient-to-r from-green-500 to-emerald-500"
+                  ? "bg-gradient-to-r from-red-500 to-red-500"
                   : "bg-gradient-to-r from-red-500 to-red-600"
               }`}
             >
@@ -1429,7 +1413,7 @@ Thank you for your order!
                 <div
                   className={`text-7xl mb-4 ${
                     paymentResult.type === "success"
-                      ? "text-green-500"
+                      ? "text-red-500"
                       : "text-red-500"
                   }`}
                 >
@@ -1440,11 +1424,11 @@ Thank you for your order!
                 </p>
 
                 {paymentResult.type === "success" ? (
-                  <div className="bg-gradient-to-r from-green-50 to-emerald-50 border-2 border-green-200 rounded-2xl p-5 mt-4">
-                    <p className="text-green-800 font-semibold text-lg mb-1">
+                  <div className="bg-gradient-to-r from-red-50 to-emerald-50 border-2 border-red-200 rounded-2xl p-5 mt-4">
+                    <p className="text-red-800 font-semibold text-lg mb-1">
                       Change:
                     </p>
-                    <p className="text-green-600 font-bold text-4xl">
+                    <p className="text-red-600 font-bold text-4xl">
                       P{changeAmount.toFixed(2)}
                     </p>
                   </div>
@@ -1486,7 +1470,7 @@ Thank you for your order!
                   }}
                   className={`flex-1 py-3.5 rounded-xl font-semibold transition-all shadow-lg hover:shadow-xl ${
                     paymentResult.type === "success"
-                      ? "bg-gradient-to-r from-green-500 to-emerald-500 text-white hover:from-green-600 hover:to-emerald-600"
+                      ? "bg-gradient-to-r from-red-500 to-red-500 text-white hover:from-red-600 hover:to-red-600"
                       : "bg-gradient-to-r from-blue-500 to-blue-600 text-white hover:from-blue-600 hover:to-blue-700"
                   }`}
                 >

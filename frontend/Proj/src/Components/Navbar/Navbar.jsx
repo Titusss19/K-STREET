@@ -89,6 +89,7 @@ function Navbar({
                   }`}
               />
             </button>
+            
 
             {/* Logout Button */}
             <button

@@ -6,6 +6,8 @@ const Items = () => {
   const [filteredItems, setFilteredItems] = useState([]);
   const [showFormModal, setShowFormModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [showSuccessModal, setShowSuccessModal] = useState(false);
+  const [successMessage, setSuccessMessage] = useState("");
   const [editingItem, setEditingItem] = useState(null);
   const [itemToDelete, setItemToDelete] = useState(null);
   const [newItem, setNewItem] = useState({
@@ -21,21 +23,31 @@ const Items = () => {
   const [itemsPerPage] = useState(10);
   const [searchTerm, setSearchTerm] = useState("");
 
-  const API = "http://localhost:3002/items";
+  // BAGO: API endpoint para sa LAHAT ng items
+  const API_ALL_ITEMS = "http://localhost:3002/all-items";
+  const API_ITEMS = "http://localhost:3002/items";
 
-  // Fetch items from backend - ALL ITEMS
-  const fetchItems = async () => {
+  // BAGO: Fetch ALL items from backend - WALANG FILTER
+  const fetchAllItems = async () => {
     try {
-      const res = await axios.get(API);
+      const res = await axios.get(API_ALL_ITEMS);
       setItems(res.data);
       setFilteredItems(res.data);
     } catch (err) {
-      console.error("Error fetching items: ", err);
+      console.error("Error fetching all items: ", err);
+      // Fallback: try the regular endpoint if all-items doesn't exist
+      try {
+        const fallbackRes = await axios.get(API_ITEMS);
+        setItems(fallbackRes.data);
+        setFilteredItems(fallbackRes.data);
+      } catch (fallbackErr) {
+        console.error("Error with fallback fetch: ", fallbackErr);
+      }
     }
   };
 
   useEffect(() => {
-    fetchItems();
+    fetchAllItems();
   }, []);
 
   // Search functionality
@@ -67,17 +79,28 @@ const Items = () => {
 
     try {
       if (editingItem) {
-        await axios.put(`${API}/${editingItem.id}`, {
+        const response = await axios.put(`${API_ITEMS}/${editingItem.id}`, {
           ...newItem,
           price: parseFloat(newItem.price),
         });
+
+        if (response.data.success) {
+          setSuccessMessage("Product updated successfully!");
+          setShowSuccessModal(true);
+        }
       } else {
-        await axios.post(API, {
+        const response = await axios.post(API_ITEMS, {
           ...newItem,
           price: parseFloat(newItem.price),
         });
+
+        if (response.data.success) {
+          setSuccessMessage("Product added successfully!");
+          setShowSuccessModal(true);
+        }
       }
-      fetchItems();
+
+      fetchAllItems(); // BAGO: Use fetchAllItems instead of fetchItems
       setShowFormModal(false);
       setEditingItem(null);
       setNewItem({
@@ -107,11 +130,12 @@ const Items = () => {
   const confirmDelete = async () => {
     if (itemToDelete) {
       try {
-        await axios.delete(`${API}/${itemToDelete.id}`);
-        fetchItems();
+        await axios.delete(`${API_ITEMS}/${itemToDelete.id}`);
+        fetchAllItems(); // BAGO: Use fetchAllItems instead of fetchItems
         setShowDeleteModal(false);
         setItemToDelete(null);
-        alert("Product deleted successfully!");
+        setSuccessMessage("Product deleted successfully!");
+        setShowSuccessModal(true);
       } catch (err) {
         console.error("Error deleting item: ", err);
         alert("Error deleting product. Please try again.");
@@ -165,7 +189,7 @@ const Items = () => {
     <div className="p-6 bg-gray-100 min-h-screen">
       <div className="max-w-6xl mx-auto bg-white p-6 rounded-lg shadow">
         <div className="flex justify-between items-center mb-4">
-          <h1 className="text-2xl font-bold">PRODUCT LIST</h1>
+          <h1 className="text-2xl font-bold">PRODUCT LIST - ALL ITEMS</h1>
 
           <button
             onClick={() => {
@@ -296,7 +320,19 @@ const Items = () => {
                       </span>
                     </td>
                     <td className="px-6 py-4 text-sm text-gray-600">
-                      <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                      <span
+                        className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium ${
+                          item.description_type === "k-street food"
+                            ? "bg-green-100 text-green-800"
+                            : item.description_type === "k-street add-ons"
+                            ? "bg-blue-100 text-blue-800"
+                            : item.description_type === "k-street add sides"
+                            ? "bg-purple-100 text-purple-800"
+                            : item.description_type === "k-street upgrades"
+                            ? "bg-orange-100 text-orange-800"
+                            : "bg-gray-100 text-gray-800"
+                        }`}
+                      >
                         {item.description_type}
                       </span>
                     </td>
@@ -381,7 +417,7 @@ const Items = () => {
                   className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
                     currentPage === totalPages
                       ? "bg-gray-200 text-gray-400 cursor-not-allowed"
-                      : "bg-gradient-to-r from-red-500 to-red500 text-white hover:from-black hover:to-black"
+                      : "bg-gradient-to-r from-red-500 to-red-500 text-white hover:from-black hover:to-black"
                   }`}
                 >
                   Next
@@ -405,7 +441,7 @@ const Items = () => {
                   </label>
                   <input
                     type="text"
-                    placeholder="Enter unique product code (e.g., PROD001, BURGER01)"
+                    placeholder="Enter product code (e.g., PROD001, BURGER01)"
                     value={newItem.product_code}
                     onChange={(e) =>
                       setNewItem({
@@ -416,7 +452,7 @@ const Items = () => {
                     className="border border-gray-300 p-2.5 rounded-lg w-full focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all"
                   />
                   <p className="text-xs text-gray-500 mt-1">
-                    Must be unique. Example: BURGER01, FRIES001, DRINK25
+                    Example: BURGER01, FRIES001, DRINK25
                   </p>
                 </div>
 
@@ -604,6 +640,43 @@ const Items = () => {
           </div>
         )}
 
+        {/* Success Modal */}
+        {showSuccessModal && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+            <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 transform transition-all">
+              <div className="flex justify-center mb-4">
+                <div className="flex items-center justify-center w-16 h-16 bg-green-100 rounded-full">
+                  <svg
+                    className="w-8 h-8 text-green-600"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M5 13l4 4L19 7"
+                    />
+                  </svg>
+                </div>
+              </div>
+              <h2 className="text-xl font-bold text-center text-gray-800 mb-2">
+                {successMessage}
+              </h2>
+              <p className="text-center text-gray-600 mb-6">
+                Operation completed successfully!
+              </p>
+              <button
+                onClick={() => setShowSuccessModal(false)}
+                className="w-full px-4 py-2.5 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white font-medium rounded-lg transition-all"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* View Modal */}
         {viewItem && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
@@ -633,7 +706,19 @@ const Items = () => {
                 </p>
                 <p className="text-gray-700">
                   <strong className="text-gray-900">Description Type:</strong>{" "}
-                  <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                  <span
+                    className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                      viewItem.description_type === "k-street food"
+                        ? "bg-green-100 text-green-800"
+                        : viewItem.description_type === "k-street add-ons"
+                        ? "bg-blue-100 text-blue-800"
+                        : viewItem.description_type === "k-street add sides"
+                        ? "bg-purple-100 text-purple-800"
+                        : viewItem.description_type === "k-street upgrades"
+                        ? "bg-orange-100 text-orange-800"
+                        : "bg-gray-100 text-gray-800"
+                    }`}
+                  >
                     {viewItem.description_type}
                   </span>
                 </p>

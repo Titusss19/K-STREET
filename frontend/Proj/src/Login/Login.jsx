@@ -86,7 +86,7 @@ export default function Login() {
       <div className="sm:mx-auto sm:w-full sm:max-w-sm">
         <img
           alt="Your Company"
-          src="https://github.com/kouyshi/capstone/blob/main/logo%20png/1.png?raw=true"
+          src="https://github.com/Titusss19/K-STREET/blob/jmbranch/ssbi-white-logo.png?raw=true"
           className="mx-auto h-30 w-auto"
         />
         <h2 className="text-center text-2xl font-bold tracking-tight text-gray-600">
