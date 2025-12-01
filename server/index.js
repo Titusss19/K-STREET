@@ -225,7 +225,6 @@ app.get("/items", (req, res) => {
   });
 });
 
-// CREATE ITEM ROUTE
 app.post("/items", (req, res) => {
   const { product_code, name, category, description_type, price, image } =
     req.body;
@@ -233,49 +232,93 @@ app.post("/items", (req, res) => {
   console.log("=== BACKEND: CREATING ITEM ===");
   console.log("Request body:", req.body);
 
-  if (
-    !product_code ||
-    !name ||
-    !category ||
-    !description_type ||
-    !price ||
-    !image
-  ) {
-    console.log("Missing fields detected");
-    return res.status(400).json({
-      success: false,
-      message: "All fields are required",
-    });
-  }
-
-  // INSERT NEW ITEM WITHOUT CHECKING FOR DUPLICATE PRODUCT CODES
-  db.execute(
-    "INSERT INTO items (product_code, name, category, description_type, price, image) VALUES (?, ?, ?, ?, ?, ?)",
-    [product_code, name, category, description_type, price, image],
-    (err, results) => {
-      if (err) {
-        console.error("Database error:", err);
-        return res.status(500).json({
-          success: false,
-          message: err.message,
-        });
-      }
-
-      console.log("✅ ITEM CREATED SUCCESSFULLY!");
-      console.log("Product Code:", product_code);
-
-      res.status(201).json({
-        success: true,
-        id: results.insertId,
-        product_code,
-        name,
-        category,
-        description_type,
-        price,
-        image,
+  // BAGO: Validation para sa flavor items
+  if (description_type === "k-street Flavor") {
+    // For flavor items, only these fields are required
+    if (!product_code || !name || !category || !description_type || !image) {
+      console.log("Missing fields for flavor item");
+      return res.status(400).json({
+        success: false,
+        message:
+          "Product code, name, category, description type, and image are required",
       });
     }
-  );
+    // Price is optional for flavor items - set to 0 if not provided
+    const finalPrice = Number(price) || 0;
+
+    db.execute(
+      "INSERT INTO items (product_code, name, category, description_type, price, image) VALUES (?, ?, ?, ?, ?, ?)",
+      [product_code, name, category, description_type, finalPrice, image],
+      (err, results) => {
+        if (err) {
+          console.error("Database error:", err);
+          return res.status(500).json({
+            success: false,
+            message: err.message,
+          });
+        }
+
+        console.log("✅ FLAVOR ITEM CREATED SUCCESSFULLY!");
+        console.log("Product Code:", product_code);
+        console.log("Price (auto-set to 0):", finalPrice);
+
+        res.status(201).json({
+          success: true,
+          id: results.insertId,
+          product_code,
+          name,
+          category,
+          description_type,
+          price: finalPrice,
+          image,
+        });
+      }
+    );
+  } else {
+    // For non-flavor items, ALL fields including price are required
+    if (
+      !product_code ||
+      !name ||
+      !category ||
+      !description_type ||
+      !price ||
+      !image
+    ) {
+      console.log("Missing fields for non-flavor item");
+      return res.status(400).json({
+        success: false,
+        message: "All fields are required for non-flavor items",
+      });
+    }
+
+    db.execute(
+      "INSERT INTO items (product_code, name, category, description_type, price, image) VALUES (?, ?, ?, ?, ?, ?)",
+      [product_code, name, category, description_type, Number(price), image],
+      (err, results) => {
+        if (err) {
+          console.error("Database error:", err);
+          return res.status(500).json({
+            success: false,
+            message: err.message,
+          });
+        }
+
+        console.log("✅ REGULAR ITEM CREATED SUCCESSFULLY!");
+        console.log("Product Code:", product_code);
+
+        res.status(201).json({
+          success: true,
+          id: results.insertId,
+          product_code,
+          name,
+          category,
+          description_type,
+          price: Number(price),
+          image,
+        });
+      }
+    );
+  }
 });
 
 // UPDATE ITEM ROUTE
@@ -572,6 +615,322 @@ app.get("/all-items", (req, res) => {
   });
 });
 
+// ------------------ INVENTORY ROUTES ------------------
+
+// GET all inventory items
+app.get("/inventory", (req, res) => {
+  const query = "SELECT * FROM inventory_items ORDER BY created_at DESC";
+
+  db.execute(query, (err, results) => {
+    if (err) {
+      console.error("Error fetching inventory items:", err);
+      return res.status(500).json({ success: false, message: err.message });
+    }
+    res.json(results);
+  });
+});
+
+// CREATE inventory item - FIXED: Added total_price field
+app.post("/inventory", (req, res) => {
+  const {
+    product_code,
+    name,
+    category,
+    description,
+    unit,
+    current_stock,
+    min_stock,
+    supplier,
+    price, // Price per item
+    total_price, // Total price (price × quantity)
+  } = req.body;
+
+  console.log("=== BACKEND: CREATING INVENTORY ITEM ===");
+  console.log("Request body:", req.body);
+
+  if (!product_code || !name || !unit) {
+    return res.status(400).json({
+      success: false,
+      message: "Product code, name, and unit are required",
+    });
+  }
+
+  const query = `
+    INSERT INTO inventory_items 
+    (product_code, name, category, description, unit, current_stock, min_stock, supplier, price, total_price)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `;
+
+  db.execute(
+    query,
+    [
+      product_code,
+      name,
+      category || "Raw Material",
+      description || "",
+      unit,
+      current_stock || 0,
+      min_stock || 0,
+      supplier || "",
+      price || 0,
+      total_price || 0,
+    ],
+    (err, results) => {
+      if (err) {
+        console.error("Error creating inventory item:", err);
+        return res.status(500).json({ success: false, message: err.message });
+      }
+
+      console.log("✅ INVENTORY ITEM CREATED SUCCESSFULLY!");
+
+      res.status(201).json({
+        success: true,
+        id: results.insertId,
+        message: "Inventory item created successfully",
+      });
+    }
+  );
+});
+
+// UPDATE inventory item - FIXED: Added total_price field
+app.put("/inventory/:id", (req, res) => {
+  const { id } = req.params;
+  const {
+    product_code,
+    name,
+    category,
+    description,
+    unit,
+    current_stock,
+    min_stock,
+    supplier,
+    price, // Price per item
+    total_price, // Total price
+  } = req.body;
+
+  console.log("=== BACKEND: UPDATING INVENTORY ITEM ===");
+  console.log("Inventory ID:", id);
+  console.log("Request body:", req.body);
+
+  if (!product_code || !name || !unit) {
+    return res.status(400).json({
+      success: false,
+      message: "Product code, name, and unit are required",
+    });
+  }
+
+  const query = `
+    UPDATE inventory_items 
+    SET product_code=?, name=?, category=?, description=?, unit=?, 
+        current_stock=?, min_stock=?, supplier=?, price=?, total_price=?
+    WHERE id=?
+  `;
+
+  db.execute(
+    query,
+    [
+      product_code,
+      name,
+      category || "Raw Material",
+      description || "",
+      unit,
+      current_stock || 0,
+      min_stock || 0,
+      supplier || "",
+      price || 0,
+      total_price || 0,
+      id,
+    ],
+    (err, results) => {
+      if (err) {
+        console.error("Error updating inventory item:", err);
+        return res.status(500).json({ success: false, message: err.message });
+      }
+
+      if (results.affectedRows === 0) {
+        return res
+          .status(404)
+          .json({ success: false, message: "Inventory item not found" });
+      }
+
+      console.log("✅ INVENTORY ITEM UPDATED SUCCESSFULLY!");
+
+      res.json({
+        success: true,
+        message: "Inventory item updated successfully",
+      });
+    }
+  );
+});
+
+// DELETE inventory item
+app.delete("/inventory/:id", (req, res) => {
+  const { id } = req.params;
+
+  console.log("=== BACKEND: DELETING INVENTORY ITEM ===");
+  console.log("Inventory ID to delete:", id);
+
+  db.execute(
+    "DELETE FROM inventory_items WHERE id = ?",
+    [id],
+    (err, results) => {
+      if (err) {
+        console.error("Error deleting inventory item:", err);
+        return res.status(500).json({ success: false, message: err.message });
+      }
+
+      if (results.affectedRows === 0) {
+        return res.status(404).json({
+          success: false,
+          message: "Inventory item not found",
+        });
+      }
+
+      console.log("✅ INVENTORY ITEM DELETED SUCCESSFULLY!");
+
+      res.json({
+        success: true,
+        message: "Inventory item deleted successfully",
+      });
+    }
+  );
+});
+
+// GET single inventory item by ID - ADD THIS
+app.get("/inventory/:id", (req, res) => {
+  const { id } = req.params;
+
+  console.log("=== BACKEND: FETCHING SINGLE INVENTORY ITEM ===");
+  console.log("Inventory ID:", id);
+
+  const query = "SELECT * FROM inventory_items WHERE id = ?";
+
+  db.execute(query, [id], (err, results) => {
+    if (err) {
+      console.error("Error fetching inventory item:", err);
+      return res.status(500).json({ success: false, message: err.message });
+    }
+
+    if (results.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Inventory item not found",
+      });
+    }
+
+    console.log("✅ INVENTORY ITEM FETCHED SUCCESSFULLY!");
+    
+    res.json({
+      success: true,
+      data: results[0],
+    });
+  });
+});
+
+// UPDATE inventory item
+app.put("/inventory/:id", (req, res) => {
+  const { id } = req.params;
+  const {
+    product_code,
+    name,
+    category,
+    description,
+    unit,
+    current_stock,
+    min_stock,
+    cost_per_unit,
+    supplier,
+    price, // PALITAN: total_price → price
+  } = req.body;
+
+  console.log("=== BACKEND: UPDATING INVENTORY ITEM ===");
+  console.log("Inventory ID:", id);
+  console.log("Request body:", req.body);
+
+  if (!product_code || !name || !unit) {
+    return res.status(400).json({
+      success: false,
+      message: "Product code, name, and unit are required",
+    });
+  }
+
+  const query = `
+    UPDATE inventory_items 
+    SET product_code=?, name=?, category=?, description=?, unit=?, 
+        current_stock=?, min_stock=?, cost_per_unit=?, supplier=?, price=?
+    WHERE id=?
+  `;
+
+  db.execute(
+    query,
+    [
+      product_code,
+      name,
+      category,
+      description,
+      unit,
+      current_stock,
+      min_stock,
+      cost_per_unit,
+      supplier,
+      price, // PALITAN: total_price → price
+      id,
+    ],
+    (err, results) => {
+      if (err) {
+        console.error("Error updating inventory item:", err);
+        return res.status(500).json({ success: false, message: err.message });
+      }
+
+      if (results.affectedRows === 0) {
+        return res
+          .status(404)
+          .json({ success: false, message: "Inventory item not found" });
+      }
+
+      console.log("✅ INVENTORY ITEM UPDATED SUCCESSFULLY!");
+
+      res.json({
+        success: true,
+        message: "Inventory item updated successfully",
+      });
+    }
+  );
+});
+
+// DELETE inventory item
+app.delete("/inventory/:id", (req, res) => {
+  const { id } = req.params;
+
+  console.log("=== BACKEND: DELETING INVENTORY ITEM ===");
+  console.log("Inventory ID to delete:", id);
+
+  db.execute(
+    "DELETE FROM inventory_items WHERE id = ?",
+    [id],
+    (err, results) => {
+      if (err) {
+        console.error("Error deleting inventory item:", err);
+        return res.status(500).json({ success: false, message: err.message });
+      }
+
+      if (results.affectedRows === 0) {
+        return res.status(404).json({
+          success: false,
+          message: "Inventory item not found",
+        });
+      }
+
+      console.log("✅ INVENTORY ITEM DELETED SUCCESSFULLY!");
+
+      res.json({
+        success: true,
+        message: "Inventory item deleted successfully",
+      });
+    }
+  );
+});
+
 // ------------------ Test ------------------
 app.get("/", (req, res) => {
   res.json({
@@ -593,6 +952,12 @@ app.get("/", (req, res) => {
         create: "POST /items",
         update: "PUT /items/:id",
         delete: "DELETE /items/:id",
+      },
+      inventory: {
+        get: "GET /inventory",
+        create: "POST /inventory",
+        update: "PUT /inventory/:id",
+        delete: "DELETE /inventory/:id",
       },
       addons: {
         get: "GET /addons",

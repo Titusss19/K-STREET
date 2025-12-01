@@ -31,8 +31,6 @@ function Navbar({
 
           {/* Right Section - User Info and Navigation */}
           <div className="flex items-center space-x-10">
-            {/* Welcome Message */}
-
             {/* Navigation Buttons */}
             <button
               onClick={() => onViewChange("dashboard")}
@@ -89,7 +87,6 @@ function Navbar({
                   }`}
               />
             </button>
-            
 
             {/* Logout Button */}
             <button

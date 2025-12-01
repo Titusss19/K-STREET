@@ -92,6 +92,23 @@ const Sales = ({ user }) => {
 
         const endGrossSales = startGrossSales + totalSales;
 
+        // Calculate payment methods summary
+        const paymentMethodsSummary = {};
+        sessionSales.forEach((order) => {
+          const method = order.payment_method || "Unknown";
+          const amount = parseFloat(order.total || 0);
+
+          if (!paymentMethodsSummary[method]) {
+            paymentMethodsSummary[method] = {
+              totalAmount: 0,
+              transactionCount: 0,
+            };
+          }
+
+          paymentMethodsSummary[method].totalAmount += amount;
+          paymentMethodsSummary[method].transactionCount += 1;
+        });
+
         return {
           ...log,
           login_time: log.timestamp,
@@ -101,6 +118,7 @@ const Sales = ({ user }) => {
           session_sales: totalSales,
           session_duration: logoutTime ? logoutTime - loginTime : null,
           session_orders: sessionSales,
+          payment_methods_summary: paymentMethodsSummary,
         };
       })
     );
@@ -341,7 +359,7 @@ const Sales = ({ user }) => {
       const worksheet = workbook.addWorksheet("Cashier Session Details");
 
       // Company Header
-      worksheet.mergeCells("A1:G1");
+      worksheet.mergeCells("A1:H1");
       const companyCell = worksheet.getCell("A1");
       companyCell.value = "K - STREET";
       companyCell.alignment = { horizontal: "center", vertical: "middle" };
@@ -354,7 +372,7 @@ const Sales = ({ user }) => {
       worksheet.getRow(1).height = 35;
 
       // Report Title
-      worksheet.mergeCells("A2:G2");
+      worksheet.mergeCells("A2:H2");
       const titleCell = worksheet.getCell("A2");
       titleCell.value = "CASHIER SESSION REPORT";
       titleCell.alignment = { horizontal: "center" };
@@ -366,7 +384,7 @@ const Sales = ({ user }) => {
       };
 
       // Cashier Information
-      worksheet.mergeCells("A3:G3");
+      worksheet.mergeCells("A3:H3");
       worksheet.getCell("A3").value = "CASHIER INFORMATION";
       worksheet.getCell("A3").font = { bold: true, size: 12 };
       worksheet.getCell("A3").fill = {
@@ -396,7 +414,7 @@ const Sales = ({ user }) => {
 
       // Sales Summary
       worksheet.addRow([]);
-      worksheet.mergeCells("A8:G8");
+      worksheet.mergeCells("A8:H8");
       worksheet.getCell("A8").value = "SALES SUMMARY";
       worksheet.getCell("A8").font = { bold: true, size: 12 };
       worksheet.getCell("A8").fill = {
@@ -422,13 +440,103 @@ const Sales = ({ user }) => {
         cashierData.session_orders?.length || 0,
       ]);
 
+      // Payment Methods Summary (kasama sa Sales Summary)
+      if (
+        cashierData.payment_methods_summary &&
+        Object.keys(cashierData.payment_methods_summary).length > 0
+      ) {
+        worksheet.addRow([]);
+        worksheet.mergeCells("A13:H13");
+        worksheet.getCell("A13").value = "PAYMENT METHODS";
+        worksheet.getCell("A13").font = { bold: true, size: 12 };
+        worksheet.getCell("A13").fill = {
+          type: "pattern",
+          pattern: "solid",
+          fgColor: { argb: "FFF3E5F5" },
+        };
+
+        // Table Headers for Payment Methods
+        const paymentHeaderRow = worksheet.addRow([
+          "Payment Method",
+          "Transaction Count",
+          "Total Amount",
+        ]);
+
+        paymentHeaderRow.eachCell((cell) => {
+          cell.font = { bold: true, color: { argb: "FFFFFFFF" }, size: 11 };
+          cell.fill = {
+            type: "pattern",
+            pattern: "solid",
+            fgColor: { argb: "FF7B1FA2" },
+          };
+          cell.alignment = { horizontal: "center", vertical: "middle" };
+          cell.border = {
+            top: { style: "thin", color: { argb: "FF000000" } },
+            left: { style: "thin", color: { argb: "FF000000" } },
+            bottom: { style: "thin", color: { argb: "FF000000" } },
+            right: { style: "thin", color: { argb: "FF000000" } },
+          };
+        });
+
+        // Data rows for Payment Methods
+        const paymentMethods = Object.entries(
+          cashierData.payment_methods_summary
+        );
+        paymentMethods.forEach(([method, data], index) => {
+          const row = worksheet.addRow([
+            method,
+            data.transactionCount,
+            data.totalAmount,
+          ]);
+
+          row.eachCell((cell, colNumber) => {
+            cell.border = {
+              top: { style: "thin", color: { argb: "FFE0E0E0" } },
+              left: { style: "thin", color: { argb: "FFE0E0E0" } },
+              bottom: { style: "thin", color: { argb: "FFE0E0E0" } },
+              right: { style: "thin", color: { argb: "FFE0E0E0" } },
+            };
+            cell.alignment = { vertical: "middle" };
+
+            if (index % 2 === 0) {
+              cell.fill = {
+                type: "pattern",
+                pattern: "solid",
+                fgColor: { argb: "FFF8F8F8" },
+              };
+            }
+
+            if (colNumber === 3) {
+              cell.numFmt = "₱#,##0.00";
+              cell.alignment = { horizontal: "right", vertical: "middle" };
+            }
+
+            if (colNumber === 2) {
+              cell.alignment = { horizontal: "center", vertical: "middle" };
+            }
+          });
+        });
+
+        // Column widths for Payment Methods
+        worksheet.getColumn(1).width = 25;
+        worksheet.getColumn(2).width = 20;
+        worksheet.getColumn(3).width = 18;
+      }
+
       // Orders Table
       if (cashierData.session_orders && cashierData.session_orders.length > 0) {
         worksheet.addRow([]);
-        worksheet.mergeCells("A13:G13");
-        worksheet.getCell("A13").value = "ORDERS DURING SESSION";
-        worksheet.getCell("A13").font = { bold: true, size: 12 };
-        worksheet.getCell("A13").fill = {
+        const ordersHeaderRow = cashierData.payment_methods_summary
+          ? worksheet.rowCount + 1
+          : 13;
+        worksheet.mergeCells(`A${ordersHeaderRow}:H${ordersHeaderRow}`);
+        worksheet.getCell(`A${ordersHeaderRow}`).value =
+          "ORDERS DURING SESSION";
+        worksheet.getCell(`A${ordersHeaderRow}`).font = {
+          bold: true,
+          size: 12,
+        };
+        worksheet.getCell(`A${ordersHeaderRow}`).fill = {
           type: "pattern",
           pattern: "solid",
           fgColor: { argb: "FFBBDEFB" },
@@ -514,7 +622,7 @@ const Sales = ({ user }) => {
 
       // Footer
       const footerRowNum = worksheet.rowCount + 2;
-      worksheet.mergeCells(`A${footerRowNum}:G${footerRowNum}`);
+      worksheet.mergeCells(`A${footerRowNum}:H${footerRowNum}`);
       const footerCell = worksheet.getCell(`A${footerRowNum}`);
       footerCell.value = `Generated: ${new Date().toLocaleString(
         "en-PH"
@@ -1055,7 +1163,7 @@ const Sales = ({ user }) => {
                     <th className="px-6 py-4 text-left text-sm font-semibold tracking-wide">
                       #
                     </th>
-                    <th className="px-6 py-4 text-left text-sm font-semibold tracking-wide">
+                    <th className="px-3 py-4 text-left text-sm font-semibold tracking-wide">
                       Date & Time
                     </th>
                     <th className="px-6 py-4 text-left text-sm font-semibold tracking-wide">
@@ -1093,7 +1201,7 @@ const Sales = ({ user }) => {
                       <td className="px-6 py-4 text-sm font-medium text-gray-900">
                         #{sale.id}
                       </td>
-                      <td className="px-6 py-4 text-sm text-gray-600">
+                      <td className="px-2 py-1 text-sm text-gray-600">
                         {new Date(sale.created_at).toLocaleString("en-PH", {
                           month: "short",
                           day: "numeric",
@@ -1137,7 +1245,7 @@ const Sales = ({ user }) => {
                           onClick={() => setShowReceipt(sale)}
                           className="bg-gradient-to-r from-black to-black text-white px-4 py-2 rounded-lg hover:from-red-600 hover:to-red-600 transition-all duration-200 text-xs font-medium shadow-sm hover:shadow-md"
                         >
-                          View Receipt
+                          View
                         </button>
                       </td>
                     </tr>
@@ -1589,6 +1697,40 @@ const Sales = ({ user }) => {
                       <strong>Total Transactions:</strong>{" "}
                       {showCashierDetails.session_orders?.length || 0}
                     </p>
+
+                    {/* Payment Methods Summary */}
+                    {showCashierDetails.payment_methods_summary &&
+                      Object.keys(showCashierDetails.payment_methods_summary)
+                        .length > 0 && (
+                        <>
+                          <div className="mt-4 pt-3 border-t border-green-200">
+                            <h4 className="font-bold text-green-800 mb-2">
+                              Payment Methods:
+                            </h4>
+                            <div className="space-y-1">
+                              {Object.entries(
+                                showCashierDetails.payment_methods_summary
+                              ).map(([method, data]) => (
+                                <div
+                                  key={method}
+                                  className="flex justify-between"
+                                >
+                                  <span className="text-sm">{method}:</span>
+                                  <div className="text-right">
+                                    <span className="text-sm font-medium">
+                                      {data.transactionCount} transaction
+                                      {data.transactionCount !== 1 ? "s" : ""}
+                                    </span>
+                                    <span className="ml-2 text-sm font-bold">
+                                      ₱{data.totalAmount.toFixed(2)}
+                                    </span>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        </>
+                      )}
                   </div>
                 </div>
 
@@ -1645,7 +1787,9 @@ const Sales = ({ user }) => {
                                   {order.orderType}
                                 </td>
                                 <td className="border border-gray-300 px-3 py-2">
-                                  {order.payment_method}
+                                  <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
+                                    {order.payment_method}
+                                  </span>
                                 </td>
                                 <td className="border border-gray-300 px-3 py-2">
                                   {new Date(

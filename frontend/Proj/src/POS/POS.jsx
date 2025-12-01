@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import axios from "axios";
 import html2canvas from "html2canvas";
 
-const FoodHubPOS = () => {
+const POS = () => {
   const [orderType, setOrderType] = useState("Dine In");
   const [cart, setCart] = useState([]);
   const [paymentAmount, setPaymentAmount] = useState("");
@@ -29,6 +29,7 @@ const FoodHubPOS = () => {
   const [showAddonsModal, setShowAddonsModal] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [selectedAddons, setSelectedAddons] = useState([]);
+  const [flavors, setFlavors] = useState([]);
   const [selectedUpgrades, setSelectedUpgrades] = useState(null);
   const [specialInstructions, setSpecialInstructions] = useState("");
 
@@ -90,24 +91,37 @@ const FoodHubPOS = () => {
     }
   };
 
-  // BAGO: Fetch upgrades na kaparehas ng product_code pero "k-street upgrades" ang description_type
+  // TAMA NA: "k-street Flavor" - maliit na k, malaking F
   const fetchUpgrades = async () => {
     try {
       const res = await axios.get("http://localhost:3002/all-items");
-      // Filter only items with description_type = "k-street upgrades"
+
+      // Filter items
       const upgradesItems = res.data.filter(
         (item) => item.description_type === "k-street upgrades"
       );
       setUpgrades(upgradesItems);
+
+      // TAMA: "k-street Flavor" - maliit na k, malaking F
+      const flavorItems = res.data.filter(
+        (item) => item.description_type === "k-street Flavor"
+      );
+      setFlavors(flavorItems);
+
+      console.log(
+        "✅ Fetched upgrades (k-street upgrades):",
+        upgradesItems.length
+      );
+      console.log("✅ Fetched flavors (k-street Flavor):", flavorItems.length);
+
+      if (flavorItems.length === 0) {
+        console.log("⚠️ WALA TALAGANG 'k-street Flavor' items sa database!");
+        console.log("Check mo sa http://localhost:3002/all-items");
+      }
     } catch (err) {
       console.error("Failed to fetch upgrades:", err);
-      // Fallback: try the regular upgrades endpoint
-      try {
-        const fallbackRes = await axios.get("http://localhost:3002/upgrades");
-        setUpgrades(fallbackRes.data);
-      } catch (fallbackErr) {
-        console.error("Failed to fetch fallback upgrades:", fallbackErr);
-      }
+      setUpgrades([]);
+      setFlavors([]);
     }
   };
 
@@ -126,7 +140,6 @@ const FoodHubPOS = () => {
     }
   };
 
-  // BAGO: COMPLETE handleStoreToggle function
   const handleStoreToggle = async () => {
     const user = JSON.parse(localStorage.getItem("user"));
     if (!user) {
@@ -150,7 +163,6 @@ const FoodHubPOS = () => {
       setStoreOpen(newStatus);
       setLastActionTime(new Date().toISOString());
 
-      // Ipakita ang success modal para sa both open at close
       const actionTime = new Date().toLocaleTimeString("en-US", {
         hour: "2-digit",
         minute: "2-digit",
@@ -190,7 +202,6 @@ const FoodHubPOS = () => {
 
   // --- Cart functions ---
   const addToCart = (product) => {
-    // Check kung closed ang store
     if (!storeOpen) {
       alert(
         "Store is currently closed. Please open the store first before adding items to cart."
@@ -247,19 +258,16 @@ const FoodHubPOS = () => {
     setSelectedUpgrades(null);
   };
 
-  // BAGO: Calculate final price with upgrades (REPLACE price, not add)
+  // Calculate final price with upgrades
   const calculateFinalPrice = (product, addons, selectedUpgrade) => {
     let finalPrice = Number(product.price) || 0;
 
-    // Add cost for selected addons
     addons.forEach((addon) => {
       finalPrice += Number(addon.price) || 0;
     });
 
-    // REPLACE the base price if upgrade is selected
     if (selectedUpgrade) {
       finalPrice = Number(selectedUpgrade.price) || 0;
-      // Still add addons cost on top of the upgraded price
       addons.forEach((addon) => {
         finalPrice += Number(addon.price) || 0;
       });
@@ -299,7 +307,6 @@ const FoodHubPOS = () => {
       0
     );
 
-  // Calculate change based on entered payment amount
   const calculateChange = () => {
     const amount = parseFloat(paymentAmount) || 0;
     const total = calculateTotal();
@@ -317,228 +324,501 @@ const FoodHubPOS = () => {
   const total = calculateTotal();
   const change = calculateChange();
 
-  // --- Payment ---
-  const handlePayment = async () => {
-    // Check kung closed ang store
-    if (!storeOpen) {
-      alert(
-        "Store is currently closed. Please open the store first before processing payments."
-      );
-      return;
+const handlePayment = async () => {
+  if (!storeOpen) {
+    alert(
+      "Store is currently closed. Please open the store first before processing payments."
+    );
+    return;
+  }
+
+  const amount = parseFloat(paymentAmount);
+
+  if (!paymentAmount || amount <= 0 || isNaN(amount)) {
+    setPaymentResult({
+      type: "error",
+      title: "Invalid Amount",
+      message: "Please enter a valid payment amount.",
+      required: total,
+    });
+    setShowPaymentModal(true);
+    return;
+  }
+
+  const currentSubtotal = calculateSubtotal();
+  const currentTotal = calculateTotal();
+
+  if (amount < currentTotal) {
+    setPaymentResult({
+      type: "error",
+      title: "Insufficient Amount",
+      message: `The amount entered is less than the total.`,
+      required: currentTotal,
+    });
+    setShowPaymentModal(true);
+    return;
+  }
+
+  const change = amount - currentTotal;
+  setChangeAmount(change);
+
+  // CREATE RECEIPT FUNCTION - GAYAHIN ANG FORMAT NG CART
+  const generateReceiptText = () => {
+    let receiptText = `
+K - Street Mc Arthur Highway, Magaspac,
+Gerona, Tarlac
+=============================
+Cashier: ${JSON.parse(localStorage.getItem("user"))?.email || "N/A"}
+Order Type: ${orderType}
+Payment Method: ${paymentMethod}
+Date: ${new Date().toLocaleString()}
+===============================
+Items:
+`;
+
+    // Add cart items - GAYAHIN ANG FORMAT NG CART
+    cart.forEach((item) => {
+      // Same logic as cart display
+      const isFlavor =
+        item.selectedUpgrade &&
+        item.selectedUpgrade.description_type === "k-street Flavor";
+      const isUpgrade =
+        item.selectedUpgrade &&
+        item.selectedUpgrade.description_type !== "k-street Flavor";
+
+      // Item name based on type (SAME AS CART DISPLAY)
+      let itemName = item.name;
+      if (isFlavor) {
+        itemName = `[${item.selectedUpgrade.name} FLAVOR] ${item.name}`;
+      } else if (isUpgrade) {
+        itemName = `[UPGRADED] ${item.selectedUpgrade.name}`;
+      }
+
+      const itemTotal = (
+        (item.finalPrice || Number(item.price) || 0) * item.quantity
+      ).toFixed(2);
+
+      receiptText += `${itemName} x${item.quantity} P${itemTotal}\n`;
+
+      // Add addons
+      if (item.selectedAddons.length > 0) {
+        receiptText += `Add-ons: ${item.selectedAddons
+          .map((a) => `${a.name} (+P${a.price})`)
+          .join(", ")}\n`;
+      }
+
+      // Add upgrade or flavor note
+      if (item.selectedUpgrade) {
+        if (item.selectedUpgrade.description_type === "k-street Flavor") {
+          receiptText += `Flavor: ${item.selectedUpgrade.name}\n`;
+        } else {
+          receiptText += `Upgrade: ${item.selectedUpgrade.name} (P${item.selectedUpgrade.price})\n`;
+        }
+      }
+
+      // Add special instructions
+      if (item.specialInstructions) {
+        receiptText += `Instructions: ${item.specialInstructions}\n`;
+      }
+
+      receiptText += "\n";
+    });
+
+    // Add totals
+    receiptText += `===============================\n`;
+    receiptText += `Subtotal: P${currentSubtotal.toFixed(2)}\n`;
+    if (discountApplied) {
+      receiptText += `Discount (20%): Applied\n`;
     }
+    receiptText += `Total: P${currentTotal.toFixed(2)}\n`;
+    receiptText += `Payment Method: ${paymentMethod}\n`;
+    receiptText += `Amount Paid: P${amount.toFixed(2)}\n`;
+    receiptText += `Change: P${change > 0 ? change.toFixed(2) : "0.00"}\n`;
+    receiptText += `===============================\n`;
+    receiptText += `Thank you for your order!\n`;
 
-    const amount = parseFloat(paymentAmount);
-
-    if (!paymentAmount || amount <= 0 || isNaN(amount)) {
-      setPaymentResult({
-        type: "error",
-        title: "Invalid Amount",
-        message: "Please enter a valid payment amount.",
-        required: total,
-      });
-      setShowPaymentModal(true);
-      return;
-    }
-
-    const currentSubtotal = calculateSubtotal();
-    const currentTotal = calculateTotal();
-
-    if (amount < currentTotal) {
-      setPaymentResult({
-        type: "error",
-        title: "Insufficient Amount",
-        message: `The amount entered is less than the total.`,
-        required: currentTotal,
-      });
-      setShowPaymentModal(true);
-      return;
-    }
-
-    const change = amount - currentTotal;
-    setChangeAmount(change);
-
-    const receipt = `
-  K - Street 
-  Mc Arthur Highway,
-  Magaspac, Gerona, Tarlac
-
-  =============================
-  Cashier: ${JSON.parse(localStorage.getItem("user"))?.email || "N/A"}
-  Order Type: ${orderType}
-  Payment Method: ${paymentMethod}
-  Date: ${new Date().toLocaleString()}
-
-  Items:
-  ${cart
-    .map(
-      (item) =>
-        `${
-          item.selectedUpgrade
-            ? `[UPGRADED] ${item.selectedUpgrade.name}`
-            : item.name
-        } x${item.quantity} - P${(
-          (item.finalPrice || Number(item.price) || 0) * item.quantity
-        ).toFixed(2)}${
-          item.selectedAddons.length > 0
-            ? `\n  Add-ons: ${item.selectedAddons
-                .map((a) => `${a.name} (+P${a.price})`)
-                .join(", ")}`
-            : ""
-        }${
-          item.selectedUpgrade
-            ? `\n  Upgrade: ${item.selectedUpgrade.name} (P${item.selectedUpgrade.price})`
-            : ""
-        }${
-          item.specialInstructions
-            ? `\n  Instructions: ${item.specialInstructions}`
-            : ""
-        }`
-    )
-    .join("\n")}
-
-  Subtotal: P${currentSubtotal.toFixed(2)}
-  ${discountApplied ? "Discount (20%): Applied\n" : ""}
-  Total: P${currentTotal.toFixed(2)}
-  Payment Method: ${paymentMethod}
-  Amount Paid: P${amount.toFixed(2)}
-  Change: P${change.toFixed(2)}
-
-  Thank you for your order!
-  `;
-
-    setReceiptContent(receipt);
-
-    const user = JSON.parse(localStorage.getItem("user"));
-    const userId = user?.id;
-
-    if (!userId) {
-      setPaymentResult({
-        type: "error",
-        title: "User Not Logged In",
-        message: "Cannot process order without login.",
-      });
-      setShowPaymentModal(true);
-      return;
-    }
-
-    try {
-      const productNames = cart
-        .map((item) =>
-          item.selectedUpgrade
-            ? `[UPGRADED] ${item.selectedUpgrade.name}`
-            : item.name
-        )
-        .join(", ");
-
-      const itemsData = JSON.stringify(
-        cart.map((item) => ({
-          id: item.id,
-          name: item.selectedUpgrade
-            ? `[UPGRADED] ${item.selectedUpgrade.name}`
-            : item.name,
-          quantity: item.quantity,
-          price: item.finalPrice || item.price,
-          subtotal:
-            (item.finalPrice || Number(item.price) || 0) * item.quantity,
-          selectedAddons: item.selectedAddons,
-          selectedUpgrade: item.selectedUpgrade,
-          specialInstructions: item.specialInstructions,
-        }))
-      );
-
-      const orderData = {
-        userId,
-        paidAmount: amount,
-        total: currentTotal,
-        discountApplied,
-        changeAmount: change,
-        orderType,
-        productNames: productNames,
-        items: itemsData,
-        paymentMethod: paymentMethod,
-      };
-
-      const res = await axios.post("http://localhost:3002/orders", orderData);
-
-      setPaymentResult({
-        type: "success",
-        title: "Payment Successful!",
-        message: `Payment of P${amount.toFixed(
-          2
-        )} received via ${paymentMethod}.`,
-        change: change,
-      });
-
-      setShowPaymentModal(true);
-    } catch (err) {
-      console.error("Failed to save order:", err);
-      setPaymentResult({
-        type: "error",
-        title: "Order Failed",
-        message: "Could not save order. Please try again.",
-      });
-      setShowPaymentModal(true);
-    }
+    return receiptText;
   };
+
+  const receipt = generateReceiptText();
+  setReceiptContent(receipt);
+
+  // Save order to database
+  const user = JSON.parse(localStorage.getItem("user"));
+  const userId = user?.id;
+
+  if (!userId) {
+    setPaymentResult({
+      type: "error",
+      title: "User Not Logged In",
+      message: "Cannot process order without login.",
+    });
+    setShowPaymentModal(true);
+    return;
+  }
+
+  try {
+    const productNames = cart
+      .map((item) => {
+        // SAME LOGIC FOR DATABASE
+        if (item.selectedUpgrade) {
+          if (item.selectedUpgrade.description_type === "k-street Flavor") {
+            return `[${item.selectedUpgrade.name} FLAVOR] ${item.name}`;
+          } else {
+            return `[UPGRADED] ${item.selectedUpgrade.name}`;
+          }
+        }
+        return item.name;
+      })
+      .join(", ");
+
+    const itemsData = JSON.stringify(
+      cart.map((item) => ({
+        id: item.id,
+        name: item.selectedUpgrade
+          ? item.selectedUpgrade.description_type === "k-street Flavor"
+            ? `[${item.selectedUpgrade.name} FLAVOR] ${item.name}`
+            : `[UPGRADED] ${item.selectedUpgrade.name}`
+          : item.name,
+        quantity: item.quantity,
+        price: item.finalPrice || item.price,
+        subtotal: (item.finalPrice || Number(item.price) || 0) * item.quantity,
+        selectedAddons: item.selectedAddons,
+        selectedUpgrade: item.selectedUpgrade,
+        specialInstructions: item.specialInstructions,
+      }))
+    );
+
+    const orderData = {
+      userId,
+      paidAmount: amount,
+      total: currentTotal,
+      discountApplied,
+      changeAmount: change,
+      orderType,
+      productNames: productNames,
+      items: itemsData,
+      paymentMethod: paymentMethod,
+    };
+
+    await axios.post("http://localhost:3002/orders", orderData);
+
+    setPaymentResult({
+      type: "success",
+      title: "Payment Successful!",
+      message: `Payment of P${amount.toFixed(
+        2
+      )} received via ${paymentMethod}.`,
+      change: change,
+    });
+
+    setShowPaymentModal(true);
+  } catch (err) {
+    console.error("Failed to save order:", err);
+    setPaymentResult({
+      type: "error",
+      title: "Order Failed",
+      message: "Could not save order. Please try again.",
+    });
+    setShowPaymentModal(true);
+  }
+};
 
   // --- Apply Discount ---
   const applyDiscount = () => {
     if (!discountApplied) setDiscountApplied(true);
   };
 
-  // --- Print Receipt ---
-  const handlePrintReceipt = () => {
-    const receiptElement = receiptRef.current;
-    if (receiptElement) {
-      const printWindow = window.open("", "_blank");
-      printWindow.document.write(`
-        <html>
-          <head>
-            <title>Receipt</title>
-            <style>
-              body { 
-                font-family: 'Courier New', monospace; 
-                margin: 20px;
-                text-align: center;
-              }
-              pre { 
-                white-space: pre-wrap; 
-                text-align: center;
-              }
-              @media print {
-                body { margin: 0; }
-              }
-            </style>
-          </head>
-          <body>
-            <pre>${receiptContent}</pre>
-            <script>
-              window.onload = function() {
-                window.print();
-                setTimeout(function() {
-                  window.close();
-                }, 1000);
-              }
-            </script>
-          </body>
-        </html>
-      `);
-      printWindow.document.close();
+const handlePrintReceipt = () => {
+  if (!receiptContent || receiptContent.trim() === "") {
+    alert("No receipt content to print!");
+    return;
+  }
+
+  // Create the same receipt text for printing
+  const createReceiptText = () => {
+    const user = JSON.parse(localStorage.getItem("user"));
+    const currentSubtotal = calculateSubtotal();
+    const currentTotal = calculateTotal();
+    const change = parseFloat(paymentAmount) - currentTotal;
+
+    let receiptText = `
+K - Street Mc Arthur Highway, Magaspac,
+Gerona, Tarlac
+=============================
+Cashier: ${user?.email || "N/A"}
+Order Type: ${orderType}
+Payment Method: ${paymentMethod}
+Date: ${new Date().toLocaleString()}
+===============================
+Items:
+`;
+
+    // Add cart items - SAME LOGIC AS CART DISPLAY
+    cart.forEach((item) => {
+      // Check if it's a flavor or upgrade
+      const isFlavor = item.selectedUpgrade && item.selectedUpgrade.description_type === "k-street Flavor";
+      const isUpgrade = item.selectedUpgrade && item.selectedUpgrade.description_type !== "k-street Flavor";
+      
+      // Item name based on type (SAME AS CART DISPLAY)
+      let itemName = item.name;
+      if (isFlavor) {
+        itemName = `[${item.selectedUpgrade.name} FLAVOR] ${item.name}`;
+      } else if (isUpgrade) {
+        itemName = `[UPGRADED] ${item.selectedUpgrade.name}`;
+      }
+
+      const itemTotal = (
+        (item.finalPrice || Number(item.price) || 0) * item.quantity
+      ).toFixed(2);
+
+      receiptText += `${itemName} x${item.quantity} P${itemTotal}\n`;
+
+      // Add addons
+      if (item.selectedAddons.length > 0) {
+        receiptText += `Add-ons: ${item.selectedAddons
+          .map((a) => `${a.name} (+P${a.price})`)
+          .join(", ")}\n`;
+      }
+
+      // Add upgrade or flavor
+      if (item.selectedUpgrade) {
+        if (item.selectedUpgrade.description_type === "k-street Flavor") {
+          receiptText += `Flavor: ${item.selectedUpgrade.name}\n`;
+        } else {
+          receiptText += `Upgrade: ${item.selectedUpgrade.name} (P${item.selectedUpgrade.price})\n`;
+        }
+      }
+
+      // Add special instructions
+      if (item.specialInstructions) {
+        receiptText += `Instructions: ${item.specialInstructions}\n`;
+      }
+
+      receiptText += "\n";
+    });
+
+    // Add totals
+    receiptText += `===============================\n`;
+    receiptText += `Subtotal: P${currentSubtotal.toFixed(2)}\n`;
+    if (discountApplied) {
+      receiptText += `Discount (20%): Applied\n`;
     }
+    receiptText += `Total: P${currentTotal.toFixed(2)}\n`;
+    receiptText += `Payment Method: ${paymentMethod}\n`;
+    receiptText += `Amount Paid: P${parseFloat(paymentAmount).toFixed(2)}\n`;
+    receiptText += `Change: P${change > 0 ? change.toFixed(2) : "0.00"}\n`;
+    receiptText += `===============================\n`;
+    receiptText += `Thank you for your order!\n`;
+
+    return receiptText;
   };
 
-  // --- Save Receipt as PNG ---
-  const handleSaveReceiptAsImage = () => {
-    const receiptElement = receiptRef.current;
-    if (receiptElement) {
-      html2canvas(receiptElement).then((canvas) => {
-        const link = document.createElement("a");
-        link.download = `receipt-${new Date().getTime()}.png`;
-        link.href = canvas.toDataURL();
-        link.click();
-      });
+  const printHTML = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>K-Street Receipt</title>
+      <style>
+        @media print {
+          body {
+            margin: 0;
+            padding: 10px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            line-height: 1.3;
+            width: 300px;
+          }
+        }
+        body {
+          font-family: 'Courier New', monospace;
+          font-size: 14px;
+          line-height: 1.3;
+          padding: 20px;
+          width: 300px;
+          margin: 0 auto;
+          white-space: pre-wrap;
+          text-align: center;
+        }
+      </style>
+    </head>
+    <body>
+      ${createReceiptText()}
+    </body>
+    </html>
+  `;
+
+  const printWindow = window.open("", "_blank");
+  printWindow.document.write(printHTML);
+  printWindow.document.close();
+  printWindow.focus();
+
+  // Auto print
+  setTimeout(() => {
+    printWindow.print();
+    printWindow.close();
+  }, 500);
+};
+
+const handleSaveReceiptAsImage = async () => {
+  try {
+    if (!receiptContent || receiptContent.trim() === "") {
+      alert("No receipt content to save!");
+      return;
     }
-  };
+
+    console.log("Saving receipt as PNG...");
+
+    // CREATE PROPER RECEIPT TEXT (GAYAHIN ANG FORMAT NG CART)
+    const createReceiptText = () => {
+      const user = JSON.parse(localStorage.getItem("user"));
+      const currentSubtotal = calculateSubtotal();
+      const currentTotal = calculateTotal();
+      const change = parseFloat(paymentAmount) - currentTotal;
+
+      let receiptText = `
+K - Street Mc Arthur Highway, Magaspac,
+Gerona, Tarlac
+=============================
+Cashier: ${user?.email || "N/A"}
+Order Type: ${orderType}
+Payment Method: ${paymentMethod}
+Date: ${new Date().toLocaleString()}
+===============================
+Items:
+`;
+
+      // Add cart items - SAME LOGIC AS CART DISPLAY
+      cart.forEach((item) => {
+        // Check if it's a flavor or upgrade
+        const isFlavor =
+          item.selectedUpgrade &&
+          item.selectedUpgrade.description_type === "k-street Flavor";
+        const isUpgrade =
+          item.selectedUpgrade &&
+          item.selectedUpgrade.description_type !== "k-street Flavor";
+
+        // Item name based on type (SAME AS CART DISPLAY)
+        let itemName = item.name;
+        if (isFlavor) {
+          itemName = `[${item.selectedUpgrade.name} FLAVOR] ${item.name}`;
+        } else if (isUpgrade) {
+          itemName = `[UPGRADED] ${item.selectedUpgrade.name}`;
+        }
+
+        const itemTotal = (
+          (item.finalPrice || Number(item.price) || 0) * item.quantity
+        ).toFixed(2);
+
+        receiptText += `${itemName} x${item.quantity} P${itemTotal}\n`;
+
+        // Add addons
+        if (item.selectedAddons.length > 0) {
+          receiptText += `Add-ons: ${item.selectedAddons
+            .map((a) => `${a.name} (+P${a.price})`)
+            .join(", ")}\n`;
+        }
+
+        // Add upgrade or flavor
+        if (item.selectedUpgrade) {
+          if (item.selectedUpgrade.description_type === "k-street Flavor") {
+            receiptText += `Flavor: ${item.selectedUpgrade.name}\n`;
+          } else {
+            receiptText += `Upgrade: ${item.selectedUpgrade.name} (P${item.selectedUpgrade.price})\n`;
+          }
+        }
+
+        // Add special instructions
+        if (item.specialInstructions) {
+          receiptText += `Instructions: ${item.specialInstructions}\n`;
+        }
+
+        receiptText += "\n";
+      });
+
+      // Add totals
+      receiptText += `===============================\n`;
+      receiptText += `Subtotal: P${currentSubtotal.toFixed(2)}\n`;
+      if (discountApplied) {
+        receiptText += `Discount (20%): Applied\n`;
+      }
+      receiptText += `Total: P${currentTotal.toFixed(2)}\n`;
+      receiptText += `Payment Method: ${paymentMethod}\n`;
+      receiptText += `Amount Paid: P${parseFloat(paymentAmount).toFixed(2)}\n`;
+      receiptText += `Change: P${change > 0 ? change.toFixed(2) : "0.00"}\n`;
+      receiptText += `===============================\n`;
+      receiptText += `Thank you for your order!\n`;
+
+      return receiptText;
+    };
+
+    // CREATE HTML FOR RENDERING (with proper spacing)
+    const receiptHTML = `
+      <div style="
+        width: 400px;
+        padding: 20px;
+        background: white;
+        color: black;
+        font-family: 'Courier New', monospace;
+        font-size: 14px;
+        line-height: 1.3;
+        white-space: pre-wrap;
+        box-sizing: border-box;
+        text-align: center;
+      ">
+        ${createReceiptText()}
+      </div>
+    `;
+
+    // Create temporary container
+    const container = document.createElement("div");
+    container.style.position = "fixed";
+    container.style.left = "-9999px";
+    container.style.top = "-9999px";
+    container.innerHTML = receiptHTML;
+    document.body.appendChild(container);
+
+    // Get the actual div element
+    const receiptDiv = container.querySelector("div");
+
+    // Wait for rendering
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    // Capture as image
+    const canvas = await html2canvas(receiptDiv, {
+      scale: 2,
+      backgroundColor: "#ffffff",
+      useCORS: true,
+      logging: false,
+      width: receiptDiv.offsetWidth,
+      height: receiptDiv.offsetHeight,
+      windowWidth: receiptDiv.offsetWidth,
+      windowHeight: receiptDiv.offsetHeight,
+    });
+
+    // Convert to data URL
+    const imgData = canvas.toDataURL("image/png");
+
+    // Create download link
+    const link = document.createElement("a");
+    const timestamp = new Date().getTime();
+    link.download = `k-street-receipt-${timestamp}.png`;
+    link.href = imgData;
+
+    // Trigger download
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+
+    // Clean up
+    document.body.removeChild(container);
+
+    console.log("Receipt saved successfully!");
+  } catch (error) {
+    console.error("Error saving receipt as PNG:", error);
+    alert("Failed to save receipt as PNG. Please try again.");
+  }
+};
 
   // Handle addon selection
   const handleAddonToggle = (addon) => {
@@ -549,13 +829,11 @@ const FoodHubPOS = () => {
     }
   };
 
-  // BAGO: Handle upgrade selection (REPLACE, not add to array)
+  // Handle upgrade selection
   const handleUpgradeToggle = (upgrade) => {
     if (selectedUpgrades && selectedUpgrades.id === upgrade.id) {
-      // If same upgrade is clicked again, deselect it
       setSelectedUpgrades(null);
     } else {
-      // Replace with the new upgrade
       setSelectedUpgrades(upgrade);
     }
   };
@@ -578,14 +856,36 @@ const FoodHubPOS = () => {
     );
   };
 
-  // BAGO: Filter upgrades by matching product_code
+  // SIMPLE NA: Kunin lang lahat ng items na same product_code
   const getFilteredUpgrades = () => {
     if (!selectedProduct) return [];
 
-    // Find upgrades that have the SAME product_code as the selected product
-    return upgrades.filter(
-      (upgrade) => upgrade.product_code === selectedProduct.product_code
+    const selectedProductCode = selectedProduct.product_code;
+
+    console.log("🔍 Looking for items with product_code:", selectedProductCode);
+    console.log("Upgrades count:", upgrades.length);
+    console.log("Flavors count:", flavors.length);
+
+    // Combine upgrades and flavors
+    const allItems = [...upgrades, ...flavors];
+
+    // Filter by product_code
+    const filtered = allItems.filter(
+      (item) => item.product_code === selectedProductCode
     );
+
+    console.log("✅ Found items:", filtered);
+    console.log(
+      "Items details:",
+      filtered.map((f) => ({
+        name: f.name,
+        product_code: f.product_code,
+        description_type: f.description_type,
+        price: f.price,
+      }))
+    );
+
+    return filtered;
   };
 
   return (
@@ -691,7 +991,6 @@ const FoodHubPOS = () => {
                 ))}
               </div>
             </div>
-
 
             {/* Product Grid */}
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-5 relative">
@@ -808,7 +1107,10 @@ const FoodHubPOS = () => {
                       <div className="flex-1">
                         <p className="font-bold text-gray-800">
                           {item.selectedUpgrade
-                            ? `[UPGRADED] ${item.selectedUpgrade.name}`
+                            ? item.selectedUpgrade.description_type ===
+                              "k-street Flavor"
+                              ? `[${item.selectedUpgrade.name} FLAVOR] ${item.name}`
+                              : `[UPGRADED] ${item.selectedUpgrade.name}`
                             : item.name}
                         </p>
                         <p className="text-sm text-gray-600 mt-0.5">
@@ -827,8 +1129,19 @@ const FoodHubPOS = () => {
                           </p>
                         )}
                         {item.selectedUpgrade && (
-                          <p className="text-xs text-green-600 font-semibold">
-                            Upgrade: {item.selectedUpgrade.name}
+                          <p
+                            className={`text-xs font-semibold ${
+                              item.selectedUpgrade.description_type ===
+                              "k-street Flavor"
+                                ? "text-purple-600"
+                                : "text-green-600"
+                            }`}
+                          >
+                            {item.selectedUpgrade.description_type ===
+                            "k-street Flavor"
+                              ? "Flavor"
+                              : "Upgrade"}
+                            : {item.selectedUpgrade.name}
                           </p>
                         )}
                         {item.specialInstructions && (
@@ -1035,7 +1348,6 @@ const FoodHubPOS = () => {
       {showStoreSuccessModal && (
         <div className="fixed inset-0 bg-black bg-opacity-60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-3xl shadow-2xl max-w-md w-full animate-fadeIn">
-    
             <div
               className={`p-6 rounded-t-3xl ${
                 storeOpen
@@ -1057,7 +1369,6 @@ const FoodHubPOS = () => {
 
             <div className="p-6">
               <div className="text-center mb-6">
-                {/* Icon - Magkaiba depende sa action */}
                 <div
                   className={`text-7xl mb-4 ${
                     storeOpen ? "text-red-500" : "text-gray-500"
@@ -1073,7 +1384,11 @@ const FoodHubPOS = () => {
                       alt=""
                       height="40"
                       width="120"
-                      style={{ display: "block", marginLeft: "auto", marginRight: "auto" }}
+                      style={{
+                        display: "block",
+                        marginLeft: "auto",
+                        marginRight: "auto",
+                      }}
                     />
                   </div>
                   {storeOpen
@@ -1192,7 +1507,7 @@ const FoodHubPOS = () => {
                 </div>
               </div>
 
-              {/* Upgrades Section (BAGO: Single Selection) */}
+              {/* Upgrades Section */}
               <div className="mb-6">
                 <h4 className="text-lg font-bold text-gray-800 mb-3">
                   Upgrades
@@ -1201,45 +1516,113 @@ const FoodHubPOS = () => {
                   Upgrade your {selectedProduct.name} to a better version
                 </p>
                 <div className="grid grid-cols-1 gap-2">
-                  {getFilteredUpgrades().map((upgrade) => (
-                    <button
-                      key={upgrade.id}
-                      className={`p-3 rounded-xl border-2 transition-all text-left ${
-                        selectedUpgrades && selectedUpgrades.id === upgrade.id
-                          ? "bg-green-100 border-green-500 text-green-700"
-                          : "bg-gray-50 border-gray-200 text-gray-700 hover:border-green-300"
-                      }`}
-                      onClick={() => handleUpgradeToggle(upgrade)}
-                    >
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <span className="font-medium">{upgrade.name}</span>
-                          <span className="text-sm text-gray-500 ml-2">
-                            Upgrade to: ₱{Number(upgrade.price).toFixed(2)}
-                          </span>
-                          <div className="text-xs text-gray-400 mt-1">
-                            Original: ₱
-                            {Number(selectedProduct.price).toFixed(2)}
+                  {getFilteredUpgrades()
+                    .filter(
+                      (item) => item.description_type === "k-street upgrades"
+                    )
+                    .map((upgrade) => (
+                      <button
+                        key={upgrade.id}
+                        className={`p-3 rounded-xl border-2 transition-all text-left ${
+                          selectedUpgrades && selectedUpgrades.id === upgrade.id
+                            ? "bg-green-100 border-green-500 text-green-700"
+                            : "bg-gray-50 border-gray-200 text-gray-700 hover:border-green-300"
+                        }`}
+                        onClick={() => handleUpgradeToggle(upgrade)}
+                      >
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <span className="font-medium">{upgrade.name}</span>
+                            <span className="text-sm text-gray-500 ml-2">
+                              Upgrade to: ₱{Number(upgrade.price).toFixed(2)}
+                            </span>
+                            <div className="text-xs text-gray-400 mt-1">
+                              Original: ₱
+                              {Number(selectedProduct.price).toFixed(2)}
+                            </div>
                           </div>
+                          <span
+                            className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${
+                              selectedUpgrades &&
+                              selectedUpgrades.id === upgrade.id
+                                ? "bg-green-500 border-green-500 text-white"
+                                : "border-gray-300"
+                            }`}
+                          >
+                            {selectedUpgrades &&
+                              selectedUpgrades.id === upgrade.id &&
+                              "✓"}
+                          </span>
                         </div>
-                        <span
-                          className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${
-                            selectedUpgrades &&
-                            selectedUpgrades.id === upgrade.id
-                              ? "bg-green-500 border-green-500 text-white"
-                              : "border-gray-300"
-                          }`}
-                        >
-                          {selectedUpgrades &&
-                            selectedUpgrades.id === upgrade.id &&
-                            "✓"}
-                        </span>
-                      </div>
-                    </button>
-                  ))}
-                  {getFilteredUpgrades().length === 0 && (
+                      </button>
+                    ))}
+                  {getFilteredUpgrades().filter(
+                    (item) => item.description_type === "k-street upgrades"
+                  ).length === 0 && (
                     <p className="text-gray-500 text-center py-4">
                       No upgrades available for {selectedProduct.name}
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              {/* k-street Flavor Section - TAMA NA: maliit na k */}
+              <div className="mb-6">
+                <h4 className="text-lg font-bold text-gray-800 mb-3">
+                  k-street Flavor
+                </h4>
+                <p className="text-sm text-gray-500 mb-3">
+                  Different flavor variations for your {selectedProduct.name}
+                </p>
+                <div className="grid grid-cols-1 gap-2">
+                  {getFilteredUpgrades()
+                    .filter(
+                      (item) => item.description_type === "k-street Flavor"
+                    )
+                    .map((flavorItem) => (
+                      <button
+                        key={flavorItem.id}
+                        className={`p-3 rounded-xl border-2 transition-all text-left ${
+                          selectedUpgrades &&
+                          selectedUpgrades.id === flavorItem.id
+                            ? "bg-purple-100 border-purple-500 text-purple-700"
+                            : "bg-gray-50 border-gray-200 text-gray-700 hover:border-purple-300"
+                        }`}
+                        onClick={() => handleUpgradeToggle(flavorItem)}
+                      >
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <span className="font-medium">
+                              {flavorItem.name}
+                            </span>
+                            <span className="text-sm text-gray-500 ml-2">
+                              Flavor: ₱{Number(flavorItem.price).toFixed(2)}
+                            </span>
+                            <div className="text-xs text-gray-400 mt-1">
+                              Original: ₱
+                              {Number(selectedProduct.price).toFixed(2)}
+                            </div>
+                          </div>
+                          <span
+                            className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${
+                              selectedUpgrades &&
+                              selectedUpgrades.id === flavorItem.id
+                                ? "bg-purple-500 border-purple-500 text-white"
+                                : "border-gray-300"
+                            }`}
+                          >
+                            {selectedUpgrades &&
+                              selectedUpgrades.id === flavorItem.id &&
+                              "✓"}
+                          </span>
+                        </div>
+                      </button>
+                    ))}
+                  {getFilteredUpgrades().filter(
+                    (item) => item.description_type === "k-street Flavor"
+                  ).length === 0 && (
+                    <p className="text-gray-500 text-center py-4">
+                      No flavor variations available for {selectedProduct.name}
                     </p>
                   )}
                 </div>
@@ -1259,7 +1642,7 @@ const FoodHubPOS = () => {
                 />
               </div>
 
-              {/* Price Summary (BAGO: Updated for upgrades) */}
+              {/* Price Summary */}
               <div className="bg-gray-50 p-4 rounded-xl mb-6">
                 <div className="flex justify-between items-center mb-2">
                   <span className="text-gray-600">
@@ -1280,13 +1663,23 @@ const FoodHubPOS = () => {
                     </span>
                   </div>
                 )}
-                {selectedUpgrades && (
-                  <div className="flex justify-between items-center mb-2 text-green-600">
-                    <span>Upgrade Applied:</span>
+                {selectedUpgrades &&
+                selectedUpgrades.description_type === "k-street Flavor" ? (
+                  <div className="flex justify-between items-center mb-2 text-purple-600">
+                    <span>Flavor Applied:</span>
                     <span className="font-semibold">
                       {selectedUpgrades.name}
                     </span>
                   </div>
+                ) : (
+                  selectedUpgrades && (
+                    <div className="flex justify-between items-center mb-2 text-green-600">
+                      <span>Upgrade Applied:</span>
+                      <span className="font-semibold">
+                        {selectedUpgrades.name}
+                      </span>
+                    </div>
+                  )
                 )}
                 <div className="flex justify-between items-center pt-2 border-t border-gray-200">
                   <span className="text-lg font-bold text-gray-800">
@@ -1344,16 +1737,128 @@ const FoodHubPOS = () => {
               </button>
             </div>
             <div className="p-6 max-h-96 overflow-y-auto">
-              <pre
+              <div
                 ref={receiptRef}
-                className="whitespace-pre-wrap font-mono text-sm text-gray-800 text-center leading-relaxed"
+                className="text-center font-mono text-sm text-gray-800 leading-relaxed bg-gray-50 p-4 rounded-lg"
                 style={{
                   fontFamily: "'Courier New', monospace",
-                  textAlign: "center",
+                  fontSize: "14px",
+                  lineHeight: "1.4",
+                  whiteSpace: "pre-wrap",
+                  wordWrap: "break-word",
                 }}
               >
-                {receiptContent}
-              </pre>
+                {cart.length === 0 ? (
+                  <div className="text-center py-12 text-gray-400">
+                    <div className="text-5xl mb-3">🛒</div>
+                    <p className="text-lg font-semibold text-gray-500">
+                      No Receipt
+                    </p>
+                    <p className="text-sm mt-1">Process a payment first</p>
+                  </div>
+                ) : (
+                  <>
+                    <div className="font-bold text-lg mb-2">
+                      K - Street
+                      <br />
+                      Mc Arthur Highway, Magaspac
+                      <br />
+                      Gerona, Tarlac
+                    </div>
+                    <hr className="border-dashed border-gray-400 my-3" />
+                    <div className="text-left">
+                      <strong>Cashier:</strong>{" "}
+                      {JSON.parse(localStorage.getItem("user"))?.email || "N/A"}
+                      <br />
+                      <strong>Order Type:</strong> {orderType}
+                      <br />
+                      <strong>Payment Method:</strong> {paymentMethod}
+                      <br />
+                      <strong>Date:</strong> {new Date().toLocaleString()}
+                    </div>
+                    <hr className="border-dashed border-gray-400 my-3" />
+                    <div className="text-left">
+                      <strong>Items:</strong>
+                      <br />
+                      {cart.map((item, index) => {
+                        const isFlavor =
+                          item.selectedUpgrade &&
+                          item.selectedUpgrade.description_type ===
+                            "k-street Flavor";
+                        const isUpgrade =
+                          item.selectedUpgrade &&
+                          item.selectedUpgrade.description_type !==
+                            "k-street Flavor";
+
+                        let itemName = item.name;
+                        if (isFlavor) {
+                          itemName = `[${item.selectedUpgrade.name} FLAVOR] ${item.name}`;
+                        } else if (isUpgrade) {
+                          itemName = `[UPGRADED] ${item.selectedUpgrade.name}`;
+                        }
+
+                        return (
+                          <div key={index} className="mb-2">
+                            {itemName} x{item.quantity} P
+                            {(
+                              (item.finalPrice || Number(item.price) || 0) *
+                              item.quantity
+                            ).toFixed(2)}
+                            {item.selectedAddons.length > 0 && (
+                              <div className="text-xs text-gray-600 ml-2">
+                                Add-ons:{" "}
+                                {item.selectedAddons
+                                  .map((a) => `${a.name} (+P${a.price})`)
+                                  .join(", ")}
+                              </div>
+                            )}
+                            {item.selectedUpgrade && (
+                              <div className="text-xs text-gray-600 ml-2">
+                                {item.selectedUpgrade.description_type ===
+                                "k-street Flavor"
+                                  ? "Flavor"
+                                  : "Upgrade"}
+                                : {item.selectedUpgrade.name}
+                                {item.selectedUpgrade.description_type !==
+                                  "k-street Flavor" &&
+                                  ` (P${item.selectedUpgrade.price})`}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <hr className="border-dashed border-gray-400 my-3" />
+                    <div className="text-left">
+                      <div>
+                        <strong>Subtotal:</strong> P
+                        {calculateSubtotal().toFixed(2)}
+                      </div>
+                      {discountApplied && (
+                        <div>
+                          <strong>Discount (20%):</strong> Applied
+                        </div>
+                      )}
+                      <div>
+                        <strong>Total:</strong> P{calculateTotal().toFixed(2)}
+                      </div>
+                      <div>
+                        <strong>Payment Method:</strong> {paymentMethod}
+                      </div>
+                      <div>
+                        <strong>Amount Paid:</strong> P{paymentAmount}
+                      </div>
+                      <div>
+                        <strong>Change:</strong> P{calculateChange().toFixed(2)}
+                      </div>
+                    </div>
+                    <hr className="border-dashed border-gray-400 my-3" />
+                    <div className="font-bold mt-4">
+                      Thank you for your order!
+                    </div>
+                  </>
+                )}
+              </div>
             </div>
             <div className="p-5 flex gap-3 border-t-2 border-gray-100">
               <button
@@ -1487,4 +1992,4 @@ const FoodHubPOS = () => {
   );
 };
 
-export default FoodHubPOS;
+export default POS;
