@@ -9,6 +9,7 @@ const POS = () => {
   const [activeCategory, setActiveCategory] = useState("All");
   const [searchTerm, setSearchTerm] = useState("");
   const [discountApplied, setDiscountApplied] = useState(false);
+  const [employeeDiscountApplied, setEmployeeDiscountApplied] = useState(false); // NEW STATE
 
   const [products, setProducts] = useState([]);
   const [categories, setCategories] = useState([]);
@@ -296,6 +297,7 @@ const POS = () => {
     setCart([]);
     setPaymentAmount("");
     setDiscountApplied(false);
+    setEmployeeDiscountApplied(false); // Reset employee discount
     setPaymentMethod("Cash");
   };
 
@@ -316,7 +318,8 @@ const POS = () => {
   const calculateTotal = () => {
     const subtotal = calculateSubtotal();
     let total = subtotal;
-    if (discountApplied) total *= 0.8;
+    if (discountApplied) total *= 0.8; // 20% PWD/Senior discount
+    if (employeeDiscountApplied) total *= 0.95; // 5% Employee discount
     return total;
   };
 
@@ -324,47 +327,47 @@ const POS = () => {
   const total = calculateTotal();
   const change = calculateChange();
 
-const handlePayment = async () => {
-  if (!storeOpen) {
-    alert(
-      "Store is currently closed. Please open the store first before processing payments."
-    );
-    return;
-  }
+  const handlePayment = async () => {
+    if (!storeOpen) {
+      alert(
+        "Store is currently closed. Please open the store first before processing payments."
+      );
+      return;
+    }
 
-  const amount = parseFloat(paymentAmount);
+    const amount = parseFloat(paymentAmount);
 
-  if (!paymentAmount || amount <= 0 || isNaN(amount)) {
-    setPaymentResult({
-      type: "error",
-      title: "Invalid Amount",
-      message: "Please enter a valid payment amount.",
-      required: total,
-    });
-    setShowPaymentModal(true);
-    return;
-  }
+    if (!paymentAmount || amount <= 0 || isNaN(amount)) {
+      setPaymentResult({
+        type: "error",
+        title: "Invalid Amount",
+        message: "Please enter a valid payment amount.",
+        required: total,
+      });
+      setShowPaymentModal(true);
+      return;
+    }
 
-  const currentSubtotal = calculateSubtotal();
-  const currentTotal = calculateTotal();
+    const currentSubtotal = calculateSubtotal();
+    const currentTotal = calculateTotal();
 
-  if (amount < currentTotal) {
-    setPaymentResult({
-      type: "error",
-      title: "Insufficient Amount",
-      message: `The amount entered is less than the total.`,
-      required: currentTotal,
-    });
-    setShowPaymentModal(true);
-    return;
-  }
+    if (amount < currentTotal) {
+      setPaymentResult({
+        type: "error",
+        title: "Insufficient Amount",
+        message: `The amount entered is less than the total.`,
+        required: currentTotal,
+      });
+      setShowPaymentModal(true);
+      return;
+    }
 
-  const change = amount - currentTotal;
-  setChangeAmount(change);
+    const change = amount - currentTotal;
+    setChangeAmount(change);
 
-  // CREATE RECEIPT FUNCTION - GAYAHIN ANG FORMAT NG CART
-  const generateReceiptText = () => {
-    let receiptText = `
+    // CREATE RECEIPT FUNCTION - GAYAHIN ANG FORMAT NG CART
+    const generateReceiptText = () => {
+      let receiptText = `
 K - Street Mc Arthur Highway, Magaspac,
 Gerona, Tarlac
 =============================
@@ -376,300 +379,185 @@ Date: ${new Date().toLocaleString()}
 Items:
 `;
 
-    // Add cart items - GAYAHIN ANG FORMAT NG CART
-    cart.forEach((item) => {
-      // Same logic as cart display
-      const isFlavor =
-        item.selectedUpgrade &&
-        item.selectedUpgrade.description_type === "k-street Flavor";
-      const isUpgrade =
-        item.selectedUpgrade &&
-        item.selectedUpgrade.description_type !== "k-street Flavor";
+      // Add cart items - GAYAHIN ANG FORMAT NG CART
+      cart.forEach((item) => {
+        // Same logic as cart display
+        const isFlavor =
+          item.selectedUpgrade &&
+          item.selectedUpgrade.description_type === "k-street Flavor";
+        const isUpgrade =
+          item.selectedUpgrade &&
+          item.selectedUpgrade.description_type !== "k-street Flavor";
 
-      // Item name based on type (SAME AS CART DISPLAY)
-      let itemName = item.name;
-      if (isFlavor) {
-        itemName = `[${item.selectedUpgrade.name} FLAVOR] ${item.name}`;
-      } else if (isUpgrade) {
-        itemName = `[UPGRADED] ${item.selectedUpgrade.name}`;
-      }
-
-      const itemTotal = (
-        (item.finalPrice || Number(item.price) || 0) * item.quantity
-      ).toFixed(2);
-
-      receiptText += `${itemName} x${item.quantity} P${itemTotal}\n`;
-
-      // Add addons
-      if (item.selectedAddons.length > 0) {
-        receiptText += `Add-ons: ${item.selectedAddons
-          .map((a) => `${a.name} (+P${a.price})`)
-          .join(", ")}\n`;
-      }
-
-      // Add upgrade or flavor note
-      if (item.selectedUpgrade) {
-        if (item.selectedUpgrade.description_type === "k-street Flavor") {
-          receiptText += `Flavor: ${item.selectedUpgrade.name}\n`;
-        } else {
-          receiptText += `Upgrade: ${item.selectedUpgrade.name} (P${item.selectedUpgrade.price})\n`;
+        // Item name based on type (SAME AS CART DISPLAY)
+        let itemName = item.name;
+        if (isFlavor) {
+          itemName = `[${item.selectedUpgrade.name} FLAVOR] ${item.name}`;
+        } else if (isUpgrade) {
+          itemName = `[UPGRADED] ${item.selectedUpgrade.name}`;
         }
-      }
 
-      // Add special instructions
-      if (item.specialInstructions) {
-        receiptText += `Instructions: ${item.specialInstructions}\n`;
-      }
+        const itemTotal = (
+          (item.finalPrice || Number(item.price) || 0) * item.quantity
+        ).toFixed(2);
 
-      receiptText += "\n";
-    });
+        receiptText += `${itemName} x${item.quantity} P${itemTotal}\n`;
 
-    // Add totals
-    receiptText += `===============================\n`;
-    receiptText += `Subtotal: P${currentSubtotal.toFixed(2)}\n`;
-    if (discountApplied) {
-      receiptText += `Discount (20%): Applied\n`;
-    }
-    receiptText += `Total: P${currentTotal.toFixed(2)}\n`;
-    receiptText += `Payment Method: ${paymentMethod}\n`;
-    receiptText += `Amount Paid: P${amount.toFixed(2)}\n`;
-    receiptText += `Change: P${change > 0 ? change.toFixed(2) : "0.00"}\n`;
-    receiptText += `===============================\n`;
-    receiptText += `Thank you for your order!\n`;
+        // Add addons
+        if (item.selectedAddons.length > 0) {
+          receiptText += `Add-ons: ${item.selectedAddons
+            .map((a) => `${a.name} (+P${a.price})`)
+            .join(", ")}\n`;
+        }
 
-    return receiptText;
-  };
-
-  const receipt = generateReceiptText();
-  setReceiptContent(receipt);
-
-  // Save order to database
-  const user = JSON.parse(localStorage.getItem("user"));
-  const userId = user?.id;
-
-  if (!userId) {
-    setPaymentResult({
-      type: "error",
-      title: "User Not Logged In",
-      message: "Cannot process order without login.",
-    });
-    setShowPaymentModal(true);
-    return;
-  }
-
-  try {
-    const productNames = cart
-      .map((item) => {
-        // SAME LOGIC FOR DATABASE
+        // Add upgrade or flavor note
         if (item.selectedUpgrade) {
           if (item.selectedUpgrade.description_type === "k-street Flavor") {
-            return `[${item.selectedUpgrade.name} FLAVOR] ${item.name}`;
+            receiptText += `Flavor: ${item.selectedUpgrade.name}\n`;
           } else {
-            return `[UPGRADED] ${item.selectedUpgrade.name}`;
+            receiptText += `Upgrade: ${item.selectedUpgrade.name} (P${item.selectedUpgrade.price})\n`;
           }
         }
-        return item.name;
-      })
-      .join(", ");
 
-    const itemsData = JSON.stringify(
-      cart.map((item) => ({
-        id: item.id,
-        name: item.selectedUpgrade
-          ? item.selectedUpgrade.description_type === "k-street Flavor"
-            ? `[${item.selectedUpgrade.name} FLAVOR] ${item.name}`
-            : `[UPGRADED] ${item.selectedUpgrade.name}`
-          : item.name,
-        quantity: item.quantity,
-        price: item.finalPrice || item.price,
-        subtotal: (item.finalPrice || Number(item.price) || 0) * item.quantity,
-        selectedAddons: item.selectedAddons,
-        selectedUpgrade: item.selectedUpgrade,
-        specialInstructions: item.specialInstructions,
-      }))
-    );
+        // Add special instructions
+        if (item.specialInstructions) {
+          receiptText += `Instructions: ${item.specialInstructions}\n`;
+        }
 
-    const orderData = {
-      userId,
-      paidAmount: amount,
-      total: currentTotal,
-      discountApplied,
-      changeAmount: change,
-      orderType,
-      productNames: productNames,
-      items: itemsData,
-      paymentMethod: paymentMethod,
+        receiptText += "\n";
+      });
+
+      // Add totals
+      receiptText += `===============================\n`;
+      receiptText += `Subtotal: P${currentSubtotal.toFixed(2)}\n`;
+
+      // Add discount info
+      if (discountApplied) {
+        receiptText += `PWD/Senior Discount (20%): Applied\n`;
+      }
+      if (employeeDiscountApplied) {
+        receiptText += `Employee Discount (5%): Applied\n`;
+      }
+
+      receiptText += `Total: P${currentTotal.toFixed(2)}\n`;
+      receiptText += `Payment Method: ${paymentMethod}\n`;
+      receiptText += `Amount Paid: P${amount.toFixed(2)}\n`;
+      receiptText += `Change: P${change > 0 ? change.toFixed(2) : "0.00"}\n`;
+      receiptText += `===============================\n`;
+      receiptText += `Thank you for your order!\n`;
+
+      return receiptText;
     };
 
-    await axios.post("http://localhost:3002/orders", orderData);
+    const receipt = generateReceiptText();
+    setReceiptContent(receipt);
 
-    setPaymentResult({
-      type: "success",
-      title: "Payment Successful!",
-      message: `Payment of P${amount.toFixed(
-        2
-      )} received via ${paymentMethod}.`,
-      change: change,
-    });
-
-    setShowPaymentModal(true);
-  } catch (err) {
-    console.error("Failed to save order:", err);
-    setPaymentResult({
-      type: "error",
-      title: "Order Failed",
-      message: "Could not save order. Please try again.",
-    });
-    setShowPaymentModal(true);
-  }
-};
-
-  // --- Apply Discount ---
-  const applyDiscount = () => {
-    if (!discountApplied) setDiscountApplied(true);
-  };
-
-const handlePrintReceipt = () => {
-  if (!receiptContent || receiptContent.trim() === "") {
-    alert("No receipt content to print!");
-    return;
-  }
-
-  // Create the same receipt text for printing
-  const createReceiptText = () => {
+    // Save order to database
     const user = JSON.parse(localStorage.getItem("user"));
-    const currentSubtotal = calculateSubtotal();
-    const currentTotal = calculateTotal();
-    const change = parseFloat(paymentAmount) - currentTotal;
+    const userId = user?.id;
 
-    let receiptText = `
-K - Street Mc Arthur Highway, Magaspac,
-Gerona, Tarlac
-=============================
-Cashier: ${user?.email || "N/A"}
-Order Type: ${orderType}
-Payment Method: ${paymentMethod}
-Date: ${new Date().toLocaleString()}
-===============================
-Items:
-`;
-
-    // Add cart items - SAME LOGIC AS CART DISPLAY
-    cart.forEach((item) => {
-      // Check if it's a flavor or upgrade
-      const isFlavor = item.selectedUpgrade && item.selectedUpgrade.description_type === "k-street Flavor";
-      const isUpgrade = item.selectedUpgrade && item.selectedUpgrade.description_type !== "k-street Flavor";
-      
-      // Item name based on type (SAME AS CART DISPLAY)
-      let itemName = item.name;
-      if (isFlavor) {
-        itemName = `[${item.selectedUpgrade.name} FLAVOR] ${item.name}`;
-      } else if (isUpgrade) {
-        itemName = `[UPGRADED] ${item.selectedUpgrade.name}`;
-      }
-
-      const itemTotal = (
-        (item.finalPrice || Number(item.price) || 0) * item.quantity
-      ).toFixed(2);
-
-      receiptText += `${itemName} x${item.quantity} P${itemTotal}\n`;
-
-      // Add addons
-      if (item.selectedAddons.length > 0) {
-        receiptText += `Add-ons: ${item.selectedAddons
-          .map((a) => `${a.name} (+P${a.price})`)
-          .join(", ")}\n`;
-      }
-
-      // Add upgrade or flavor
-      if (item.selectedUpgrade) {
-        if (item.selectedUpgrade.description_type === "k-street Flavor") {
-          receiptText += `Flavor: ${item.selectedUpgrade.name}\n`;
-        } else {
-          receiptText += `Upgrade: ${item.selectedUpgrade.name} (P${item.selectedUpgrade.price})\n`;
-        }
-      }
-
-      // Add special instructions
-      if (item.specialInstructions) {
-        receiptText += `Instructions: ${item.specialInstructions}\n`;
-      }
-
-      receiptText += "\n";
-    });
-
-    // Add totals
-    receiptText += `===============================\n`;
-    receiptText += `Subtotal: P${currentSubtotal.toFixed(2)}\n`;
-    if (discountApplied) {
-      receiptText += `Discount (20%): Applied\n`;
-    }
-    receiptText += `Total: P${currentTotal.toFixed(2)}\n`;
-    receiptText += `Payment Method: ${paymentMethod}\n`;
-    receiptText += `Amount Paid: P${parseFloat(paymentAmount).toFixed(2)}\n`;
-    receiptText += `Change: P${change > 0 ? change.toFixed(2) : "0.00"}\n`;
-    receiptText += `===============================\n`;
-    receiptText += `Thank you for your order!\n`;
-
-    return receiptText;
-  };
-
-  const printHTML = `
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <title>K-Street Receipt</title>
-      <style>
-        @media print {
-          body {
-            margin: 0;
-            padding: 10px;
-            font-family: 'Courier New', monospace;
-            font-size: 14px;
-            line-height: 1.3;
-            width: 300px;
-          }
-        }
-        body {
-          font-family: 'Courier New', monospace;
-          font-size: 14px;
-          line-height: 1.3;
-          padding: 20px;
-          width: 300px;
-          margin: 0 auto;
-          white-space: pre-wrap;
-          text-align: center;
-        }
-      </style>
-    </head>
-    <body>
-      ${createReceiptText()}
-    </body>
-    </html>
-  `;
-
-  const printWindow = window.open("", "_blank");
-  printWindow.document.write(printHTML);
-  printWindow.document.close();
-  printWindow.focus();
-
-  // Auto print
-  setTimeout(() => {
-    printWindow.print();
-    printWindow.close();
-  }, 500);
-};
-
-const handleSaveReceiptAsImage = async () => {
-  try {
-    if (!receiptContent || receiptContent.trim() === "") {
-      alert("No receipt content to save!");
+    if (!userId) {
+      setPaymentResult({
+        type: "error",
+        title: "User Not Logged In",
+        message: "Cannot process order without login.",
+      });
+      setShowPaymentModal(true);
       return;
     }
 
-    console.log("Saving receipt as PNG...");
+    try {
+      const productNames = cart
+        .map((item) => {
+          // SAME LOGIC FOR DATABASE
+          if (item.selectedUpgrade) {
+            if (item.selectedUpgrade.description_type === "k-street Flavor") {
+              return `[${item.selectedUpgrade.name} FLAVOR] ${item.name}`;
+            } else {
+              return `[UPGRADED] ${item.selectedUpgrade.name}`;
+            }
+          }
+          return item.name;
+        })
+        .join(", ");
 
-    // CREATE PROPER RECEIPT TEXT (GAYAHIN ANG FORMAT NG CART)
+      const itemsData = JSON.stringify(
+        cart.map((item) => ({
+          id: item.id,
+          name: item.selectedUpgrade
+            ? item.selectedUpgrade.description_type === "k-street Flavor"
+              ? `[${item.selectedUpgrade.name} FLAVOR] ${item.name}`
+              : `[UPGRADED] ${item.selectedUpgrade.name}`
+            : item.name,
+          quantity: item.quantity,
+          price: item.finalPrice || item.price,
+          subtotal:
+            (item.finalPrice || Number(item.price) || 0) * item.quantity,
+          selectedAddons: item.selectedAddons,
+          selectedUpgrade: item.selectedUpgrade,
+          specialInstructions: item.specialInstructions,
+        }))
+      );
+
+      const orderData = {
+        userId,
+        paidAmount: amount,
+        total: currentTotal,
+        discountApplied,
+        employeeDiscountApplied, // Add employee discount to order data
+        changeAmount: change,
+        orderType,
+        productNames: productNames,
+        items: itemsData,
+        paymentMethod: paymentMethod,
+      };
+
+      await axios.post("http://localhost:3002/orders", orderData);
+
+      setPaymentResult({
+        type: "success",
+        title: "Payment Successful!",
+        message: `Payment of P${amount.toFixed(
+          2
+        )} received via ${paymentMethod}.`,
+        change: change,
+      });
+
+      setShowPaymentModal(true);
+    } catch (err) {
+      console.error("Failed to save order:", err);
+      setPaymentResult({
+        type: "error",
+        title: "Order Failed",
+        message: "Could not save order. Please try again.",
+      });
+      setShowPaymentModal(true);
+    }
+  };
+
+  // --- Apply Discount ---
+  const applyDiscount = () => {
+    if (!discountApplied && !employeeDiscountApplied) {
+      setDiscountApplied(true);
+      setEmployeeDiscountApplied(false); // Ensure only one discount is active
+    }
+  };
+
+  // --- Apply Employee Discount ---
+  const applyEmployeeDiscount = () => {
+    if (!employeeDiscountApplied && !discountApplied) {
+      setEmployeeDiscountApplied(true);
+      setDiscountApplied(false); // Ensure only one discount is active
+    }
+  };
+
+  const handlePrintReceipt = () => {
+    if (!receiptContent || receiptContent.trim() === "") {
+      alert("No receipt content to print!");
+      return;
+    }
+
+    // Create the same receipt text for printing
     const createReceiptText = () => {
       const user = JSON.parse(localStorage.getItem("user"));
       const currentSubtotal = calculateSubtotal();
@@ -739,9 +627,15 @@ Items:
       // Add totals
       receiptText += `===============================\n`;
       receiptText += `Subtotal: P${currentSubtotal.toFixed(2)}\n`;
+
+      // Add discount info
       if (discountApplied) {
-        receiptText += `Discount (20%): Applied\n`;
+        receiptText += `PWD/Senior Discount (20%): Applied\n`;
       }
+      if (employeeDiscountApplied) {
+        receiptText += `Employee Discount (5%): Applied\n`;
+      }
+
       receiptText += `Total: P${currentTotal.toFixed(2)}\n`;
       receiptText += `Payment Method: ${paymentMethod}\n`;
       receiptText += `Amount Paid: P${parseFloat(paymentAmount).toFixed(2)}\n`;
@@ -752,73 +646,219 @@ Items:
       return receiptText;
     };
 
-    // CREATE HTML FOR RENDERING (with proper spacing)
-    const receiptHTML = `
-      <div style="
-        width: 400px;
-        padding: 20px;
-        background: white;
-        color: black;
-        font-family: 'Courier New', monospace;
-        font-size: 14px;
-        line-height: 1.3;
-        white-space: pre-wrap;
-        box-sizing: border-box;
-        text-align: center;
-      ">
+    const printHTML = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>K-Street Receipt</title>
+        <style>
+          @media print {
+            body {
+              margin: 0;
+              padding: 10px;
+              font-family: 'Courier New', monospace;
+              font-size: 14px;
+              line-height: 1.3;
+              width: 300px;
+            }
+          }
+          body {
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            line-height: 1.3;
+            padding: 20px;
+            width: 300px;
+            margin: 0 auto;
+            white-space: pre-wrap;
+            text-align: center;
+          }
+        </style>
+      </head>
+      <body>
         ${createReceiptText()}
-      </div>
+      </body>
+      </html>
     `;
 
-    // Create temporary container
-    const container = document.createElement("div");
-    container.style.position = "fixed";
-    container.style.left = "-9999px";
-    container.style.top = "-9999px";
-    container.innerHTML = receiptHTML;
-    document.body.appendChild(container);
+    const printWindow = window.open("", "_blank");
+    printWindow.document.write(printHTML);
+    printWindow.document.close();
+    printWindow.focus();
 
-    // Get the actual div element
-    const receiptDiv = container.querySelector("div");
+    // Auto print
+    setTimeout(() => {
+      printWindow.print();
+      printWindow.close();
+    }, 500);
+  };
 
-    // Wait for rendering
-    await new Promise((resolve) => setTimeout(resolve, 100));
+  const handleSaveReceiptAsImage = async () => {
+    try {
+      if (!receiptContent || receiptContent.trim() === "") {
+        alert("No receipt content to save!");
+        return;
+      }
 
-    // Capture as image
-    const canvas = await html2canvas(receiptDiv, {
-      scale: 2,
-      backgroundColor: "#ffffff",
-      useCORS: true,
-      logging: false,
-      width: receiptDiv.offsetWidth,
-      height: receiptDiv.offsetHeight,
-      windowWidth: receiptDiv.offsetWidth,
-      windowHeight: receiptDiv.offsetHeight,
-    });
+      console.log("Saving receipt as PNG...");
 
-    // Convert to data URL
-    const imgData = canvas.toDataURL("image/png");
+      // CREATE PROPER RECEIPT TEXT (GAYAHIN ANG FORMAT NG CART)
+      const createReceiptText = () => {
+        const user = JSON.parse(localStorage.getItem("user"));
+        const currentSubtotal = calculateSubtotal();
+        const currentTotal = calculateTotal();
+        const change = parseFloat(paymentAmount) - currentTotal;
 
-    // Create download link
-    const link = document.createElement("a");
-    const timestamp = new Date().getTime();
-    link.download = `k-street-receipt-${timestamp}.png`;
-    link.href = imgData;
+        let receiptText = `
+K - Street Mc Arthur Highway, Magaspac,
+Gerona, Tarlac
+=============================
+Cashier: ${user?.email || "N/A"}
+Order Type: ${orderType}
+Payment Method: ${paymentMethod}
+Date: ${new Date().toLocaleString()}
+===============================
+Items:
+`;
 
-    // Trigger download
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+        // Add cart items - SAME LOGIC AS CART DISPLAY
+        cart.forEach((item) => {
+          // Check if it's a flavor or upgrade
+          const isFlavor =
+            item.selectedUpgrade &&
+            item.selectedUpgrade.description_type === "k-street Flavor";
+          const isUpgrade =
+            item.selectedUpgrade &&
+            item.selectedUpgrade.description_type !== "k-street Flavor";
 
-    // Clean up
-    document.body.removeChild(container);
+          // Item name based on type (SAME AS CART DISPLAY)
+          let itemName = item.name;
+          if (isFlavor) {
+            itemName = `[${item.selectedUpgrade.name} FLAVOR] ${item.name}`;
+          } else if (isUpgrade) {
+            itemName = `[UPGRADED] ${item.selectedUpgrade.name}`;
+          }
 
-    console.log("Receipt saved successfully!");
-  } catch (error) {
-    console.error("Error saving receipt as PNG:", error);
-    alert("Failed to save receipt as PNG. Please try again.");
-  }
-};
+          const itemTotal = (
+            (item.finalPrice || Number(item.price) || 0) * item.quantity
+          ).toFixed(2);
+
+          receiptText += `${itemName} x${item.quantity} P${itemTotal}\n`;
+
+          // Add addons
+          if (item.selectedAddons.length > 0) {
+            receiptText += `Add-ons: ${item.selectedAddons
+              .map((a) => `${a.name} (+P${a.price})`)
+              .join(", ")}\n`;
+          }
+
+          // Add upgrade or flavor
+          if (item.selectedUpgrade) {
+            if (item.selectedUpgrade.description_type === "k-street Flavor") {
+              receiptText += `Flavor: ${item.selectedUpgrade.name}\n`;
+            } else {
+              receiptText += `Upgrade: ${item.selectedUpgrade.name} (P${item.selectedUpgrade.price})\n`;
+            }
+          }
+
+          // Add special instructions
+          if (item.specialInstructions) {
+            receiptText += `Instructions: ${item.specialInstructions}\n`;
+          }
+
+          receiptText += "\n";
+        });
+
+        // Add totals
+        receiptText += `===============================\n`;
+        receiptText += `Subtotal: P${currentSubtotal.toFixed(2)}\n`;
+
+        // Add discount info
+        if (discountApplied) {
+          receiptText += `PWD/Senior Discount (20%): Applied\n`;
+        }
+        if (employeeDiscountApplied) {
+          receiptText += `Employee Discount (5%): Applied\n`;
+        }
+
+        receiptText += `Total: P${currentTotal.toFixed(2)}\n`;
+        receiptText += `Payment Method: ${paymentMethod}\n`;
+        receiptText += `Amount Paid: P${parseFloat(paymentAmount).toFixed(
+          2
+        )}\n`;
+        receiptText += `Change: P${change > 0 ? change.toFixed(2) : "0.00"}\n`;
+        receiptText += `===============================\n`;
+        receiptText += `Thank you for your order!\n`;
+
+        return receiptText;
+      };
+
+      // CREATE HTML FOR RENDERING (with proper spacing)
+      const receiptHTML = `
+        <div style="
+          width: 400px;
+          padding: 20px;
+          background: white;
+          color: black;
+          font-family: 'Courier New', monospace;
+          font-size: 14px;
+          line-height: 1.3;
+          white-space: pre-wrap;
+          box-sizing: border-box;
+          text-align: center;
+        ">
+          ${createReceiptText()}
+        </div>
+      `;
+
+      // Create temporary container
+      const container = document.createElement("div");
+      container.style.position = "fixed";
+      container.style.left = "-9999px";
+      container.style.top = "-9999px";
+      container.innerHTML = receiptHTML;
+      document.body.appendChild(container);
+
+      // Get the actual div element
+      const receiptDiv = container.querySelector("div");
+
+      // Wait for rendering
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      // Capture as image
+      const canvas = await html2canvas(receiptDiv, {
+        scale: 2,
+        backgroundColor: "#ffffff",
+        useCORS: true,
+        logging: false,
+        width: receiptDiv.offsetWidth,
+        height: receiptDiv.offsetHeight,
+        windowWidth: receiptDiv.offsetWidth,
+        windowHeight: receiptDiv.offsetHeight,
+      });
+
+      // Convert to data URL
+      const imgData = canvas.toDataURL("image/png");
+
+      // Create download link
+      const link = document.createElement("a");
+      const timestamp = new Date().getTime();
+      link.download = `k-street-receipt-${timestamp}.png`;
+      link.href = imgData;
+
+      // Trigger download
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+
+      // Clean up
+      document.body.removeChild(container);
+
+      console.log("Receipt saved successfully!");
+    } catch (error) {
+      console.error("Error saving receipt as PNG:", error);
+      alert("Failed to save receipt as PNG. Please try again.");
+    }
+  };
 
   // Handle addon selection
   const handleAddonToggle = (addon) => {
@@ -886,6 +926,13 @@ Items:
     );
 
     return filtered;
+  };
+
+  // Calculate discount amounts
+  const calculateDiscountAmount = () => {
+    if (discountApplied) return subtotal * 0.2;
+    if (employeeDiscountApplied) return subtotal * 0.05;
+    return 0;
   };
 
   return (
@@ -1063,13 +1110,13 @@ Items:
               </button>
             </div>
 
-            {/* Discount Button */}
-            <div className="mb-4">
+            {/* Discount Buttons - UPDATED WITH EMPLOYEE DISCOUNT */}
+            <div className="mb-4 grid grid-cols-2 gap-3">
               <button
                 className={`w-full py-3.5 rounded-xl font-semibold text-white transition-all shadow-lg ${
                   discountApplied || !storeOpen
                     ? "bg-gray-300 cursor-not-allowed"
-                    : "bg-black hover:shadow-xl"
+                    : "bg-gradient-to-r from-black to-black hover:from-red-600 hover:to-red-600 hover:shadow-xl"
                 }`}
                 onClick={applyDiscount}
                 disabled={discountApplied || !storeOpen}
@@ -1078,12 +1125,30 @@ Items:
                     ? "Store is closed"
                     : discountApplied
                     ? "Discount already applied"
-                    : "Apply discount"
+                    : "Apply PWD/Senior discount (20%)"
                 }
               >
-                {discountApplied
-                  ? "Discount Applied (20%)"
-                  : "Apply PWD/Senior Discount 20%"}
+                {discountApplied ? "PWD/Senior 20%" : "PWD/Senior 20%"}
+              </button>
+
+              {/* NEW EMPLOYEE DISCOUNT BUTTON */}
+              <button
+                className={`w-full py-3.5 rounded-xl font-semibold text-white transition-all shadow-lg ${
+                  employeeDiscountApplied || !storeOpen
+                    ? "bg-gray-300 cursor-not-allowed"
+                    : "bg-gradient-to-r from-red-600 to-red-600 hover:from-black hover:to-black hover:shadow-xl"
+                }`}
+                onClick={applyEmployeeDiscount}
+                disabled={employeeDiscountApplied || !storeOpen}
+                title={
+                  !storeOpen
+                    ? "Store is closed"
+                    : employeeDiscountApplied
+                    ? "Employee discount already applied"
+                    : "Apply Employee discount (5%)"
+                }
+              >
+                {employeeDiscountApplied ? "Employee 5%" : "Employee 5%"}
               </button>
             </div>
 
@@ -1197,12 +1262,22 @@ Items:
                   <span className="font-medium">Subtotal</span>
                   <span className="font-semibold">P{subtotal.toFixed(2)}</span>
                 </div>
+
+                {/* Discount Display */}
                 {discountApplied && (
                   <div className="flex justify-between text-amber-600 font-bold bg-amber-50 p-2 rounded-lg">
-                    <span>Discount (20%)</span>
+                    <span>PWD/Senior Discount (20%)</span>
                     <span>-P{(subtotal * 0.2).toFixed(2)}</span>
                   </div>
                 )}
+
+                {employeeDiscountApplied && (
+                  <div className="flex justify-between text-blue-600 font-bold bg-blue-50 p-2 rounded-lg">
+                    <span>Employee Discount (5%)</span>
+                    <span>-P{(subtotal * 0.05).toFixed(2)}</span>
+                  </div>
+                )}
+
                 <div className="flex justify-between font-bold text-xl  border-gray-200 pt-4 text-gray-900">
                   <span className="font-bold">Change</span>
                   <span className="font-semibold text-green-600">
@@ -1836,7 +1911,12 @@ Items:
                       </div>
                       {discountApplied && (
                         <div>
-                          <strong>Discount (20%):</strong> Applied
+                          <strong>PWD/Senior Discount (20%):</strong> Applied
+                        </div>
+                      )}
+                      {employeeDiscountApplied && (
+                        <div>
+                          <strong>Employee Discount (5%):</strong> Applied
                         </div>
                       )}
                       <div>

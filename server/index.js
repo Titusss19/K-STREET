@@ -8,7 +8,7 @@ const PORT = 3002;
 
 // Middleware
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: "50mb" })); // Increase limit for large data
 
 // Database connection
 const db = mysql.createConnection({
@@ -16,6 +16,7 @@ const db = mysql.createConnection({
   user: "root",
   password: "",
   database: "db",
+  charset: "utf8mb4",
 });
 
 db.connect((err) => {
@@ -232,9 +233,7 @@ app.post("/items", (req, res) => {
   console.log("=== BACKEND: CREATING ITEM ===");
   console.log("Request body:", req.body);
 
-  // BAGO: Validation para sa flavor items
   if (description_type === "k-street Flavor") {
-    // For flavor items, only these fields are required
     if (!product_code || !name || !category || !description_type || !image) {
       console.log("Missing fields for flavor item");
       return res.status(400).json({
@@ -243,7 +242,6 @@ app.post("/items", (req, res) => {
           "Product code, name, category, description type, and image are required",
       });
     }
-    // Price is optional for flavor items - set to 0 if not provided
     const finalPrice = Number(price) || 0;
 
     db.execute(
@@ -275,7 +273,6 @@ app.post("/items", (req, res) => {
       }
     );
   } else {
-    // For non-flavor items, ALL fields including price are required
     if (
       !product_code ||
       !name ||
@@ -338,7 +335,6 @@ app.put("/items/:id", (req, res) => {
     });
   }
 
-  // Fetch current image
   const sqlGet = "SELECT image FROM items WHERE id = ?";
   db.query(sqlGet, [id], (err, result) => {
     if (err) {
@@ -357,11 +353,8 @@ app.put("/items/:id", (req, res) => {
     }
 
     const existingImage = result[0]?.image;
-
-    // Keep old image if no new one is provided
     const finalImage = image && image.trim() !== "" ? image : existingImage;
 
-    // UPDATE ITEM WITHOUT CHECKING FOR DUPLICATE PRODUCT CODES
     const sqlUpdate = `
       UPDATE items 
       SET product_code=?, name=?, category=?, description_type=?, price=?, image=?
@@ -471,8 +464,72 @@ app.get("/orders", (req, res) => {
   });
 });
 
+// VOID ORDER ENDPOINT
+app.put("/orders/:id/void", (req, res) => {
+  const { id } = req.params;
+  const { is_void, void_reason, voided_by, voided_at } = req.body;
+
+  console.log("=== BACKEND: VOIDING ORDER ===");
+  console.log("Order ID:", id);
+  console.log("Void data:", req.body);
+
+  if (!void_reason) {
+    return res.status(400).json({
+      success: false,
+      message: "Void reason is required",
+    });
+  }
+
+  const query = `
+    UPDATE orders 
+    SET is_void = ?, 
+        void_reason = ?, 
+        voided_by = ?, 
+        voided_at = ?,
+        updated_at = NOW()
+    WHERE id = ?
+  `;
+
+  const values = [
+    is_void || 1,
+    void_reason,
+    voided_by || "Admin",
+    voided_at || new Date().toISOString().slice(0, 19).replace("T", " "),
+    id,
+  ];
+
+  db.execute(query, values, (err, results) => {
+    if (err) {
+      console.error("Error voiding order:", err);
+      return res.status(500).json({
+        success: false,
+        message: "Failed to void order",
+        error: err.message,
+      });
+    }
+
+    if (results.affectedRows === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Order not found",
+      });
+    }
+
+    console.log("✅ ORDER VOIDED SUCCESSFULLY!");
+    console.log("Order ID:", id);
+    console.log("Void Reason:", void_reason);
+
+    res.json({
+      success: true,
+      message: "Order voided successfully",
+      orderId: id,
+    });
+  });
+});
+
 app.post("/orders", (req, res) => {
   console.log("=== BACKEND: RECEIVING ORDER ===");
+  console.log("Full request body:", JSON.stringify(req.body, null, 2));
 
   const {
     userId,
@@ -488,8 +545,11 @@ app.post("/orders", (req, res) => {
 
   console.log("Payment Method received:", paymentMethod);
 
+  // Validation
   if (!userId || paidAmount === undefined || paidAmount === null) {
+    console.error("Missing required fields: userId or paidAmount");
     return res.status(400).json({
+      success: false,
       message: "Invalid order data: userId and paidAmount are required",
       received: req.body,
     });
@@ -502,40 +562,208 @@ app.post("/orders", (req, res) => {
 
   console.log("Final paymentMethod to save:", finalPaymentMethod);
 
-  const query = `
-    INSERT INTO orders (userId, paidAmount, total, discountApplied, changeAmount, orderType, productNames, items, payment_method)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  // Handle items - ensure it's a JSON string
+  let itemsString;
+  try {
+    if (typeof items === "string") {
+      itemsString = items;
+    } else if (Array.isArray(items)) {
+      itemsString = JSON.stringify(items);
+    } else if (typeof items === "object" && items !== null) {
+      itemsString = JSON.stringify(items);
+    } else {
+      itemsString = "[]";
+    }
+  } catch (error) {
+    console.error("Error stringifying items:", error);
+    itemsString = "[]";
+  }
+
+  // FIXED: First, check if the orders table has voided_by_id column
+  const checkTableQuery = `
+    SELECT COLUMN_NAME 
+    FROM INFORMATION_SCHEMA.COLUMNS 
+    WHERE TABLE_SCHEMA = 'db' 
+      AND TABLE_NAME = 'orders' 
+      AND COLUMN_NAME = 'voided_by_id'
   `;
 
-  db.query(
-    query,
-    [
-      userId,
-      paidAmount || 0,
-      total || 0,
-      discountApplied ? 1 : 0,
-      changeAmount || 0,
-      orderType || "Dine In",
-      productNames || "No items",
-      items || "[]",
-      finalPaymentMethod,
-    ],
-    (err, result) => {
+  db.execute(checkTableQuery, (checkErr, checkResults) => {
+    if (checkErr) {
+      console.error("Error checking table structure:", checkErr);
+      // Proceed with basic insert without voided_by_id
+      insertOrder(false);
+    } else {
+      // If column exists, include it with NULL
+      const hasVoidedById = checkResults.length > 0;
+      insertOrder(hasVoidedById);
+    }
+  });
+
+  function insertOrder(includeVoidedById) {
+    // Build dynamic query based on table structure
+    let query;
+    let values;
+
+    if (includeVoidedById) {
+      query = `
+        INSERT INTO orders 
+        (userId, paidAmount, total, discountApplied, changeAmount, orderType, 
+         productNames, items, payment_method, voided_by_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `;
+      values = [
+        parseInt(userId) || 0,
+        parseFloat(paidAmount) || 0,
+        parseFloat(total) || 0,
+        discountApplied ? 1 : 0,
+        parseFloat(changeAmount) || 0,
+        orderType || "Dine In",
+        productNames || "No items",
+        itemsString,
+        finalPaymentMethod,
+        null, // voided_by_id
+      ];
+    } else {
+      // If voided_by_id doesn't exist, use simpler query
+      query = `
+        INSERT INTO orders 
+        (userId, paidAmount, total, discountApplied, changeAmount, orderType, 
+         productNames, items, payment_method)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `;
+      values = [
+        parseInt(userId) || 0,
+        parseFloat(paidAmount) || 0,
+        parseFloat(total) || 0,
+        discountApplied ? 1 : 0,
+        parseFloat(changeAmount) || 0,
+        orderType || "Dine In",
+        productNames || "No items",
+        itemsString,
+        finalPaymentMethod,
+      ];
+    }
+
+    console.log("Using query:", query);
+    console.log("SQL values:", values);
+
+    db.query(query, values, (err, result) => {
       if (err) {
-        console.error("Failed to save order:", err);
-        return res.status(500).json({ message: "Failed to save order" });
+        console.error("❌ FAILED TO SAVE ORDER:");
+        console.error("SQL Error:", err.code);
+        console.error("SQL Message:", err.sqlMessage);
+        console.error("Full error:", err);
+
+        // Try alternative: Remove foreign key constraint temporarily
+        if (err.code === "ER_NO_REFERENCED_ROW_2" || err.errno === 1452) {
+          console.log("⚠️ Foreign key constraint error detected.");
+          console.log("Trying alternative insert...");
+          insertOrderWithFallback();
+          return;
+        }
+
+        return res.status(500).json({
+          success: false,
+          message: "Failed to save order to database",
+          error: err.message,
+          sqlError: err.sqlMessage,
+        });
       }
 
       console.log("✅ ORDER SAVED SUCCESSFULLY!");
+      console.log("Order ID:", result.insertId);
       console.log("Payment Method Saved:", finalPaymentMethod);
 
       res.status(200).json({
+        success: true,
         message: "Order saved successfully",
         orderId: result.insertId,
         paymentMethod: finalPaymentMethod,
       });
-    }
-  );
+    });
+  }
+
+  function insertOrderWithFallback() {
+    // Try with simpler query that excludes problematic columns
+    const fallbackQuery = `
+      INSERT INTO orders 
+      (userId, paidAmount, total, discountApplied, changeAmount, orderType, 
+       productNames, items, payment_method)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `;
+
+    const fallbackValues = [
+      parseInt(userId) || 0,
+      parseFloat(paidAmount) || 0,
+      parseFloat(total) || 0,
+      discountApplied ? 1 : 0,
+      parseFloat(changeAmount) || 0,
+      orderType || "Dine In",
+      productNames || "No items",
+      itemsString,
+      finalPaymentMethod,
+    ];
+
+    console.log("Trying fallback query:", fallbackQuery);
+    console.log("Fallback values:", fallbackValues);
+
+    db.query(fallbackQuery, fallbackValues, (fallbackErr, fallbackResult) => {
+      if (fallbackErr) {
+        console.error("❌ FALLBACK ALSO FAILED:");
+        console.error("SQL Error:", fallbackErr.code);
+        console.error("SQL Message:", fallbackErr.sqlMessage);
+
+        // Last resort: Try without foreign key constraints
+        const emergencyQuery = `
+          INSERT INTO orders 
+          (userId, paidAmount, total, orderType, productNames, items)
+          VALUES (?, ?, ?, ?, ?, ?)
+        `;
+
+        const emergencyValues = [
+          parseInt(userId) || 0,
+          parseFloat(paidAmount) || 0,
+          parseFloat(total) || 0,
+          orderType || "Dine In",
+          productNames || "No items",
+          itemsString,
+        ];
+
+        db.query(
+          emergencyQuery,
+          emergencyValues,
+          (emergencyErr, emergencyResult) => {
+            if (emergencyErr) {
+              console.error("❌ EMERGENCY INSERT FAILED TOO!");
+              return res.status(500).json({
+                success: false,
+                message:
+                  "Database error. Please check your orders table structure.",
+                error: emergencyErr.message,
+              });
+            }
+
+            console.log("⚠️ ORDER SAVED WITH EMERGENCY QUERY");
+            res.status(200).json({
+              success: true,
+              message: "Order saved (with limited fields)",
+              orderId: emergencyResult.insertId,
+            });
+          }
+        );
+        return;
+      }
+
+      console.log("✅ ORDER SAVED WITH FALLBACK QUERY!");
+      res.status(200).json({
+        success: true,
+        message: "Order saved successfully",
+        orderId: fallbackResult.insertId,
+        paymentMethod: finalPaymentMethod,
+      });
+    });
+  }
 });
 
 // ------------------ STORE HOURS ------------------
@@ -630,7 +858,7 @@ app.get("/inventory", (req, res) => {
   });
 });
 
-// CREATE inventory item - FIXED: Added total_price field
+// CREATE inventory item
 app.post("/inventory", (req, res) => {
   const {
     product_code,
@@ -641,8 +869,8 @@ app.post("/inventory", (req, res) => {
     current_stock,
     min_stock,
     supplier,
-    price, // Price per item
-    total_price, // Total price (price × quantity)
+    price,
+    total_price,
   } = req.body;
 
   console.log("=== BACKEND: CREATING INVENTORY ITEM ===");
@@ -692,7 +920,38 @@ app.post("/inventory", (req, res) => {
   );
 });
 
-// UPDATE inventory item - FIXED: Added total_price field
+// GET single inventory item by ID
+app.get("/inventory/:id", (req, res) => {
+  const { id } = req.params;
+
+  console.log("=== BACKEND: FETCHING SINGLE INVENTORY ITEM ===");
+  console.log("Inventory ID:", id);
+
+  const query = "SELECT * FROM inventory_items WHERE id = ?";
+
+  db.execute(query, [id], (err, results) => {
+    if (err) {
+      console.error("Error fetching inventory item:", err);
+      return res.status(500).json({ success: false, message: err.message });
+    }
+
+    if (results.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Inventory item not found",
+      });
+    }
+
+    console.log("✅ INVENTORY ITEM FETCHED SUCCESSFULLY!");
+
+    res.json({
+      success: true,
+      data: results[0],
+    });
+  });
+});
+
+// UPDATE inventory item - SINGLE VERSION (REMOVED DUPLICATE)
 app.put("/inventory/:id", (req, res) => {
   const { id } = req.params;
   const {
@@ -704,8 +963,8 @@ app.put("/inventory/:id", (req, res) => {
     current_stock,
     min_stock,
     supplier,
-    price, // Price per item
-    total_price, // Total price
+    price,
+    total_price,
   } = req.body;
 
   console.log("=== BACKEND: UPDATING INVENTORY ITEM ===");
@@ -796,141 +1055,6 @@ app.delete("/inventory/:id", (req, res) => {
   );
 });
 
-// GET single inventory item by ID - ADD THIS
-app.get("/inventory/:id", (req, res) => {
-  const { id } = req.params;
-
-  console.log("=== BACKEND: FETCHING SINGLE INVENTORY ITEM ===");
-  console.log("Inventory ID:", id);
-
-  const query = "SELECT * FROM inventory_items WHERE id = ?";
-
-  db.execute(query, [id], (err, results) => {
-    if (err) {
-      console.error("Error fetching inventory item:", err);
-      return res.status(500).json({ success: false, message: err.message });
-    }
-
-    if (results.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: "Inventory item not found",
-      });
-    }
-
-    console.log("✅ INVENTORY ITEM FETCHED SUCCESSFULLY!");
-    
-    res.json({
-      success: true,
-      data: results[0],
-    });
-  });
-});
-
-// UPDATE inventory item
-app.put("/inventory/:id", (req, res) => {
-  const { id } = req.params;
-  const {
-    product_code,
-    name,
-    category,
-    description,
-    unit,
-    current_stock,
-    min_stock,
-    cost_per_unit,
-    supplier,
-    price, // PALITAN: total_price → price
-  } = req.body;
-
-  console.log("=== BACKEND: UPDATING INVENTORY ITEM ===");
-  console.log("Inventory ID:", id);
-  console.log("Request body:", req.body);
-
-  if (!product_code || !name || !unit) {
-    return res.status(400).json({
-      success: false,
-      message: "Product code, name, and unit are required",
-    });
-  }
-
-  const query = `
-    UPDATE inventory_items 
-    SET product_code=?, name=?, category=?, description=?, unit=?, 
-        current_stock=?, min_stock=?, cost_per_unit=?, supplier=?, price=?
-    WHERE id=?
-  `;
-
-  db.execute(
-    query,
-    [
-      product_code,
-      name,
-      category,
-      description,
-      unit,
-      current_stock,
-      min_stock,
-      cost_per_unit,
-      supplier,
-      price, // PALITAN: total_price → price
-      id,
-    ],
-    (err, results) => {
-      if (err) {
-        console.error("Error updating inventory item:", err);
-        return res.status(500).json({ success: false, message: err.message });
-      }
-
-      if (results.affectedRows === 0) {
-        return res
-          .status(404)
-          .json({ success: false, message: "Inventory item not found" });
-      }
-
-      console.log("✅ INVENTORY ITEM UPDATED SUCCESSFULLY!");
-
-      res.json({
-        success: true,
-        message: "Inventory item updated successfully",
-      });
-    }
-  );
-});
-
-// DELETE inventory item
-app.delete("/inventory/:id", (req, res) => {
-  const { id } = req.params;
-
-  console.log("=== BACKEND: DELETING INVENTORY ITEM ===");
-  console.log("Inventory ID to delete:", id);
-
-  db.execute(
-    "DELETE FROM inventory_items WHERE id = ?",
-    [id],
-    (err, results) => {
-      if (err) {
-        console.error("Error deleting inventory item:", err);
-        return res.status(500).json({ success: false, message: err.message });
-      }
-
-      if (results.affectedRows === 0) {
-        return res.status(404).json({
-          success: false,
-          message: "Inventory item not found",
-        });
-      }
-
-      console.log("✅ INVENTORY ITEM DELETED SUCCESSFULLY!");
-
-      res.json({
-        success: true,
-        message: "Inventory item deleted successfully",
-      });
-    }
-  );
-});
-
 // ------------------ Test ------------------
 app.get("/", (req, res) => {
   res.json({
@@ -959,25 +1083,26 @@ app.get("/", (req, res) => {
         update: "PUT /inventory/:id",
         delete: "DELETE /inventory/:id",
       },
-      addons: {
-        get: "GET /addons",
-        create: "POST /addons",
-        getForItem: "GET /items/:id/addons",
-      },
-      upgrades: {
-        get: "GET /upgrades",
-        create: "POST /upgrades",
-        getForItem: "GET /items/:id/upgrades",
-      },
       orders: {
         get: "GET /orders",
         create: "POST /orders",
+        void: "PUT /orders/:id/void",
       },
       storeHours: {
         logAction: "POST /store-hours/log-store-action",
         getStatus: "GET /store-hours/current-store-status",
       },
     },
+  });
+});
+
+// Error handling middleware
+app.use((err, req, res, next) => {
+  console.error("Unhandled error:", err);
+  res.status(500).json({
+    success: false,
+    message: "Internal server error",
+    error: err.message,
   });
 });
 
