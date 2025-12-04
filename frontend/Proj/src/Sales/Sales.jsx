@@ -5,9 +5,17 @@ import { saveAs } from "file-saver";
 import html2canvas from "html2canvas";
 import jsPDF from "jspdf";
 
-const Sales = ({ user }) => {
+const Sales = () => {
+  // GET USER FROM LOCALSTORAGE
+  const [user, setUser] = useState(() => {
+    const userData = localStorage.getItem("user");
+    return userData ? JSON.parse(userData) : null;
+  });
+
   const [sales, setSales] = useState([]);
+  const [allSales, setAllSales] = useState([]); // For admin/owner view
   const [storeHoursLogs, setStoreHoursLogs] = useState([]);
+  const [allStoreHoursLogs, setAllStoreHoursLogs] = useState([]); // For admin/owner view
   const [showReceipt, setShowReceipt] = useState(null);
   const [showCashierDetails, setShowCashierDetails] = useState(null);
   const [exportRange, setExportRange] = useState("all");
@@ -28,31 +36,121 @@ const Sales = ({ user }) => {
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [successMessage, setSuccessMessage] = useState("");
 
+  // New state for branch filter (for admin/owner)
+  const [selectedBranch, setSelectedBranch] = useState("all");
+  const [allBranches, setAllBranches] = useState([]);
+
   // Refs for print content
   const receiptPrintRef = useRef(null);
   const cashierPrintRef = useRef(null);
 
-  // Fetch orders from backend
-  useEffect(() => {
-    fetchSales();
-  }, []);
+  // Create axios instance with user headers
+  const api = axios.create({
+    baseURL: "http://localhost:3002",
+    headers: {
+      "Content-Type": "application/json",
+      user: localStorage.getItem("user"),
+    },
+  });
 
+  // Check if user is admin/owner
+  const isAdminOrOwner = user?.role === "admin" || user?.role === "owner";
+
+  // Fetch all branches for admin/owner
+  useEffect(() => {
+    if (isAdminOrOwner) {
+      fetchAllBranches();
+    }
+  }, [isAdminOrOwner]);
+
+  // Fetch orders from backend - AUTOMATICALLY FILTERED BY BRANCH or ALL for admin
+  useEffect(() => {
+    if (isAdminOrOwner) {
+      fetchAllSales();
+    } else {
+      fetchSales();
+    }
+  }, [isAdminOrOwner]);
+
+  // Fetch all sales data for admin/owner
+  const fetchAllSales = async () => {
+    try {
+      const res = await api.get("/admin/all-orders");
+      setAllSales(res.data);
+
+      // Also fetch filtered sales for current branch
+      if (selectedBranch !== "all") {
+        const filtered = res.data.filter(
+          (sale) => sale.branch === selectedBranch
+        );
+        setSales(filtered);
+      } else {
+        setSales(res.data);
+      }
+    } catch (err) {
+      console.error("Error fetching all sales:", err);
+      if (err.response?.status === 401) {
+        alert("Please login again.");
+        window.location.href = "/login";
+      }
+    }
+  };
+
+  // Fetch sales for regular users (branch-filtered)
   const fetchSales = async () => {
     try {
-      const res = await axios.get("http://localhost:3002/orders");
+      const res = await api.get("/orders");
       setSales(res.data);
     } catch (err) {
       console.error("Error fetching sales:", err);
+      if (err.response?.status === 401) {
+        alert("Please login again.");
+        window.location.href = "/login";
+      }
     }
   };
+
+  // Fetch all branches for admin/owner dropdown
+  const fetchAllBranches = async () => {
+    try {
+      // Get unique branches from users table or orders table
+      const usersRes = await api.get("/users");
+      const branches = [
+        ...new Set(usersRes.data.map((user) => user.branch).filter((b) => b)),
+      ];
+      setAllBranches(["all", ...branches]);
+    } catch (err) {
+      console.error("Error fetching branches:", err);
+    }
+  };
+
+  // Fetch store hours logs and compute cashier data
 
   // Fetch store hours logs and compute cashier data
   useEffect(() => {
     const fetchStoreHoursLogs = async () => {
       try {
-        const res = await axios.get("http://localhost:3002/store-hours-logs");
-        const logsWithSales = await computeCashierSalesData(res.data);
-        setStoreHoursLogs(logsWithSales);
+        if (isAdminOrOwner) {
+          // For admin, fetch all logs then filter
+          const res = await api.get("/admin/all-store-hours-logs");
+          const allLogs = res.data;
+          setAllStoreHoursLogs(allLogs);
+
+          // Filter based on selected branch
+          let logsToProcess = allLogs;
+          if (selectedBranch !== "all") {
+            logsToProcess = allLogs.filter(
+              (log) => log.branch === selectedBranch
+            );
+          }
+
+          const logsWithSales = await computeCashierSalesData(logsToProcess);
+          setStoreHoursLogs(logsWithSales);
+        } else {
+          const res = await api.get("/store-hours-logs");
+          const logsWithSales = await computeCashierSalesData(res.data);
+          setStoreHoursLogs(logsWithSales);
+        }
       } catch (err) {
         console.error("Error fetching store hours logs:", err);
       }
@@ -61,18 +159,35 @@ const Sales = ({ user }) => {
     if (activeReport === "payment-methods") {
       fetchStoreHoursLogs();
     }
-  }, [activeReport, sales]);
+  }, [activeReport, sales, isAdminOrOwner, selectedBranch]);
+
+  // Handle branch filter change for admin/owner
+  useEffect(() => {
+    if (isAdminOrOwner) {
+      if (selectedBranch === "all") {
+        setSales(allSales);
+      } else {
+        const filtered = allSales.filter(
+          (sale) => sale.branch === selectedBranch
+        );
+        setSales(filtered);
+      }
+    }
+  }, [selectedBranch, allSales, isAdminOrOwner]);
 
   // Compute cashier sales data based on store hours logs and orders
+  // I-FIX ANG computeCashierSalesData FUNCTION
+  // I-FIX ANG computeCashierSalesData FUNCTION
   const computeCashierSalesData = async (logs) => {
     const logsWithSales = await Promise.all(
       logs.map(async (log) => {
-        // Find the next "close" action to determine session end time
+        // Find the next "close" action
         const nextCloseLog = logs.find(
-          (l, index) =>
+          (l) =>
             l.id > log.id &&
             l.action === "close" &&
-            l.user_email === log.user_email
+            (l.user_email === log.user_email || l.user_id === log.user_id) &&
+            l.branch === log.branch
         );
 
         const loginTime = new Date(log.timestamp);
@@ -80,17 +195,49 @@ const Sales = ({ user }) => {
           ? new Date(nextCloseLog.timestamp)
           : null;
 
+        // DEBUG: Print log info
+        console.log(`Processing log:`, {
+          logId: log.id,
+          userId: log.user_id,
+          userEmail: log.user_email,
+          branch: log.branch,
+          action: log.action,
+          loginTime: loginTime.toISOString(),
+        });
+
         // Calculate sales during this session
         const sessionSales = sales.filter((order) => {
           const orderTime = new Date(order.created_at);
-          return (
+          const orderUserId = order.userId || order.user_id;
+
+          // DEBUG per order
+          const isMatch =
             orderTime >= loginTime &&
             (!logoutTime || orderTime <= logoutTime) &&
-            order.userId === log.user_id &&
-            !order.is_void // Exclude voided orders
-          );
+            (orderUserId == log.user_id || order.cashier === log.user_email) && // FIX: Use == for loose comparison
+            (!log.branch || order.branch === log.branch) && // Handle null branches
+            !order.is_void;
+
+          if (isMatch) {
+            console.log(`Matched order #${order.id} to log ${log.id}:`, {
+              orderUserId,
+              logUserId: log.user_id,
+              orderTime: orderTime.toISOString(),
+              loginTime: loginTime.toISOString(),
+              logoutTime: logoutTime ? logoutTime.toISOString() : "none",
+              orderBranch: order.branch,
+              logBranch: log.branch,
+            });
+          }
+
+          return isMatch;
         });
 
+        console.log(
+          `Log ${log.id}: Found ${sessionSales.length} matching orders`
+        );
+
+        // ... rest of your calculations ...
         const totalSales = sessionSales.reduce(
           (sum, order) => sum + parseFloat(order.total || 0),
           0
@@ -99,7 +246,11 @@ const Sales = ({ user }) => {
         // Calculate starting gross sales (sales before login)
         const salesBeforeLogin = sales.filter((order) => {
           const orderTime = new Date(order.created_at);
-          return orderTime < loginTime && !order.is_void;
+          return (
+            orderTime < loginTime &&
+            !order.is_void &&
+            (!log.branch || order.branch === log.branch) // Handle null branches
+          );
         });
 
         const startGrossSales = salesBeforeLogin.reduce(
@@ -140,8 +291,17 @@ const Sales = ({ user }) => {
       })
     );
 
-    // Filter only "open" actions and remove duplicates
-    return logsWithSales.filter((log) => log.action === "open");
+    // Filter only "open" actions
+    const openLogs = logsWithSales.filter((log) => log.action === "open");
+
+    console.log(`Total open logs: ${openLogs.length}`);
+    openLogs.forEach((log) => {
+      console.log(
+        `Open log ${log.id}: ${log.session_orders?.length || 0} orders`
+      );
+    });
+
+    return openLogs;
   };
 
   // Filter sales based on selected range
@@ -287,21 +447,37 @@ const Sales = ({ user }) => {
 
     setIsVoiding(true);
     try {
-      // Send the user object (who is performing the void)
-      const response = await axios.put(
-        `http://localhost:3002/orders/${orderToVoid.id}/void`,
-        {
-          is_void: true,
-          void_reason: voidReason,
-          user: user, // THIS IS THE USER WHO IS VOIDING
-          voided_at: new Date().toISOString(),
-        }
-      );
+      const response = await api.put(`/orders/${orderToVoid.id}/void`, {
+        is_void: true,
+        void_reason: voidReason,
+        user: user,
+        voided_at: new Date().toISOString(),
+      });
 
       if (response.status === 200) {
         // Update local state
         const voidedByName = user?.name || user?.email || "Admin";
 
+        // Update allSales if admin
+        if (isAdminOrOwner) {
+          setAllSales((prevSales) =>
+            prevSales.map((order) =>
+              order.id === orderToVoid.id
+                ? {
+                    ...order,
+                    is_void: true,
+                    void_reason: voidReason,
+                    voided_by: voidedByName,
+                    voided_by_user: user,
+                    voided_at: new Date().toISOString(),
+                    cashier: order.cashier,
+                  }
+                : order
+            )
+          );
+        }
+
+        // Update filtered sales
         setSales((prevSales) =>
           prevSales.map((order) =>
             order.id === orderToVoid.id
@@ -309,11 +485,10 @@ const Sales = ({ user }) => {
                   ...order,
                   is_void: true,
                   void_reason: voidReason,
-                  voided_by: voidedByName, // Store who voided it
-                  voided_by_user: user, // Store full user object
+                  voided_by: voidedByName,
+                  voided_by_user: user,
                   voided_at: new Date().toISOString(),
-                  // Keep original cashier separate
-                  cashier: order.cashier, // This stays as original cashier
+                  cashier: order.cashier,
                 }
               : order
           )
@@ -332,7 +507,11 @@ const Sales = ({ user }) => {
       }
     } catch (error) {
       console.error("Error voiding order:", error);
-      alert("Failed to void order. Please try again.");
+      if (error.response?.status === 404) {
+        alert("Order not found or you don't have permission to void it.");
+      } else {
+        alert("Failed to void order. Please try again.");
+      }
     } finally {
       setIsVoiding(false);
     }
@@ -359,7 +538,7 @@ const Sales = ({ user }) => {
     const printWindow = window.open("", "_blank");
     const receipt = showReceipt;
 
-    // Create receipt text function similar to yours
+    // Create receipt text function
     const createReceiptText = (receipt) => {
       const cashierName = receipt.cashier || "N/A";
       const isVoided = isOrderVoided(receipt);
@@ -542,7 +721,7 @@ Items:
       </html>
     `);
     } else {
-      // NON-VOIDED receipt with your design
+      // NON-VOIDED receipt
       printWindow.document.write(`
       <!DOCTYPE html>
       <html>
@@ -634,42 +813,42 @@ Items:
     printWindow.document.close();
   };
 
- const printCashierReport = () => {
-   const cashierData = showCashierDetails;
+  const printCashierReport = () => {
+    const cashierData = showCashierDetails;
 
-   // CALCULATE TOTAL DISCOUNT AND TOTAL VOID AMOUNT
-   const totalDiscount = cashierData.session_orders
-     ? cashierData.session_orders.reduce((sum, order) => {
-         if (order.discountApplied) {
-           return sum + (parseFloat(order.total) / 0.8) * 0.2;
-         }
-         return sum;
-       }, 0)
-     : 0;
+    // CALCULATE TOTAL DISCOUNT AND TOTAL VOID AMOUNT
+    const totalDiscount = cashierData.session_orders
+      ? cashierData.session_orders.reduce((sum, order) => {
+          if (order.discountApplied) {
+            return sum + (parseFloat(order.total) / 0.8) * 0.2;
+          }
+          return sum;
+        }, 0)
+      : 0;
 
-   const totalVoidAmount = sales
-     .filter(
-       (order) =>
-         order.userId === cashierData.user_id &&
-         isOrderVoided(order) &&
-         new Date(order.created_at) >= new Date(cashierData.login_time) &&
-         (!cashierData.logout_time ||
-           new Date(order.created_at) <= new Date(cashierData.logout_time))
-     )
-     .reduce((sum, order) => sum + parseFloat(order.total || 0), 0);
+    const totalVoidAmount = sales
+      .filter(
+        (order) =>
+          order.userId === cashierData.user_id &&
+          isOrderVoided(order) &&
+          new Date(order.created_at) >= new Date(cashierData.login_time) &&
+          (!cashierData.logout_time ||
+            new Date(order.created_at) <= new Date(cashierData.logout_time))
+      )
+      .reduce((sum, order) => sum + parseFloat(order.total || 0), 0);
 
-   const totalVoidTransactions = sales.filter(
-     (order) =>
-       order.userId === cashierData.user_id &&
-       isOrderVoided(order) &&
-       new Date(order.created_at) >= new Date(cashierData.login_time) &&
-       (!cashierData.logout_time ||
-         new Date(order.created_at) <= new Date(cashierData.logout_time))
-   ).length;
+    const totalVoidTransactions = sales.filter(
+      (order) =>
+        order.userId === cashierData.user_id &&
+        isOrderVoided(order) &&
+        new Date(order.created_at) >= new Date(cashierData.login_time) &&
+        (!cashierData.logout_time ||
+          new Date(order.created_at) <= new Date(cashierData.logout_time))
+    ).length;
 
-   const printWindow = window.open("", "_blank");
+    const printWindow = window.open("", "_blank");
 
-   printWindow.document.write(`
+    printWindow.document.write(`
     <!DOCTYPE html>
     <html>
     <head>
@@ -825,6 +1004,10 @@ Items:
               cashierData.logout_time
             )}</span>
           </div>
+          <div class="info-row">
+            <span class="info-label">Branch:</span>
+            <span>${cashierData.branch || user?.branch}</span>
+          </div>
         </div>
         
         <div class="section">
@@ -861,12 +1044,12 @@ Items:
             <div class="info-row void-row">
               <span class="info-label">Total Void Amount:</span>
               <span>₱${totalVoidAmount.toFixed(2)} ${
-     totalVoidTransactions > 0
-       ? `(${totalVoidTransactions} transaction${
-           totalVoidTransactions !== 1 ? "s" : ""
-         })`
-       : ""
-   }</span>
+      totalVoidTransactions > 0
+        ? `(${totalVoidTransactions} transaction${
+            totalVoidTransactions !== 1 ? "s" : ""
+          })`
+        : ""
+    }</span>
             </div>
           </div>
           
@@ -956,8 +1139,8 @@ Items:
     </body>
     </html>
   `);
-   printWindow.document.close();
- };
+    printWindow.document.close();
+  };
 
   const saveCashierReportAsPDF = async () => {
     try {
@@ -1003,7 +1186,7 @@ Items:
       tempDiv.style.padding = "20px";
       tempDiv.style.fontFamily = "Arial, sans-serif";
 
-      // Build the report HTML (ADD DISCOUNT AND VOID AMOUNT)
+      // Build the report HTML
       const reportHTML = `
       <div style="text-align: center; margin-bottom: 20px;">
         <h1 style="font-size: 24px; color: #d32f2f; margin-bottom: 5px; font-weight: bold;">K - STREET</h1>
@@ -1034,6 +1217,9 @@ Items:
             cashierData.login_time,
             cashierData.logout_time
           )}</p>
+          <p style="margin: 5px 0; font-size: 12px;"><strong>Branch:</strong> ${
+            cashierData.branch || user?.branch
+          }</p>
         </div>
 
         <div style="background-color: #f0fdf4; padding: 15px; border-radius: 5px; border: 1px solid #bbf7d0;">
@@ -1202,713 +1388,11 @@ Items:
     }
   };
 
- const exportCashierSessionToExcel = async (cashierData) => {
-   try {
-     // CALCULATE TOTAL DISCOUNT AND TOTAL VOID AMOUNT
-     const totalDiscount = cashierData.session_orders
-       ? cashierData.session_orders.reduce((sum, order) => {
-           if (order.discountApplied) {
-             return sum + (parseFloat(order.total) / 0.8) * 0.2;
-           }
-           return sum;
-         }, 0)
-       : 0;
-
-     const totalVoidAmount = sales
-       .filter(
-         (order) =>
-           order.userId === cashierData.user_id &&
-           isOrderVoided(order) &&
-           new Date(order.created_at) >= new Date(cashierData.login_time) &&
-           (!cashierData.logout_time ||
-             new Date(order.created_at) <= new Date(cashierData.logout_time))
-       )
-       .reduce((sum, order) => sum + parseFloat(order.total || 0), 0);
-
-     const totalVoidTransactions = sales.filter(
-       (order) =>
-         order.userId === cashierData.user_id &&
-         isOrderVoided(order) &&
-         new Date(order.created_at) >= new Date(cashierData.login_time) &&
-         (!cashierData.logout_time ||
-           new Date(order.created_at) <= new Date(cashierData.logout_time))
-     ).length;
-
-     const workbook = new ExcelJS.Workbook();
-     const worksheet = workbook.addWorksheet("Cashier Session Details");
-
-     // Company Header
-     worksheet.mergeCells("A1:H1");
-     const companyCell = worksheet.getCell("A1");
-     companyCell.value = "K - STREET";
-     companyCell.alignment = { horizontal: "center", vertical: "middle" };
-     companyCell.font = { size: 20, bold: true, color: { argb: "FFFFFFFF" } };
-     companyCell.fill = {
-       type: "pattern",
-       pattern: "solid",
-       fgColor: { argb: "FFFF0000" },
-     };
-     worksheet.getRow(1).height = 35;
-
-     // Report Title
-     worksheet.mergeCells("A2:H2");
-     const titleCell = worksheet.getCell("A2");
-     titleCell.value = "CASHIER SESSION REPORT";
-     titleCell.alignment = { horizontal: "center" };
-     titleCell.font = { size: 16, bold: true };
-     titleCell.fill = {
-       type: "pattern",
-       pattern: "solid",
-       fgColor: { argb: "FFFFEBEE" },
-     };
-
-     // Cashier Information
-     worksheet.mergeCells("A3:H3");
-     worksheet.getCell("A3").value = "CASHIER INFORMATION";
-     worksheet.getCell("A3").font = { bold: true, size: 12 };
-     worksheet.getCell("A3").fill = {
-       type: "pattern",
-       pattern: "solid",
-       fgColor: { argb: "FFFFCDD2" },
-     };
-
-     worksheet.addRow(["Cashier Email:", cashierData.user_email]);
-     worksheet.addRow([
-       "Login Time:",
-       new Date(cashierData.login_time).toLocaleString("en-PH"),
-     ]);
-     worksheet.addRow([
-       "Logout Time:",
-       cashierData.logout_time
-         ? new Date(cashierData.logout_time).toLocaleString("en-PH")
-         : "Still Active",
-     ]);
-     worksheet.addRow([
-       "Session Duration:",
-       calculateSessionDuration(
-         cashierData.login_time,
-         cashierData.logout_time
-       ),
-     ]);
-
-     // Sales Summary
-     worksheet.addRow([]);
-     worksheet.mergeCells("A8:H8");
-     worksheet.getCell("A8").value = "SALES SUMMARY";
-     worksheet.getCell("A8").font = { bold: true, size: 12 };
-     worksheet.getCell("A8").fill = {
-       type: "pattern",
-       pattern: "solid",
-       fgColor: { argb: "FFC8E6C9" },
-     };
-
-     worksheet.addRow([
-       "Starting Gross Sales:",
-       `₱${parseFloat(cashierData.start_gross_sales || 0).toFixed(2)}`,
-     ]);
-     worksheet.addRow([
-       "Ending Gross Sales:",
-       `₱${parseFloat(cashierData.end_gross_sales || 0).toFixed(2)}`,
-     ]);
-     worksheet.addRow([
-       "Sales During Session:",
-       `₱${parseFloat(cashierData.session_sales || 0).toFixed(2)}`,
-     ]);
-     worksheet.addRow([
-       "Total Transactions:",
-       cashierData.session_orders?.length || 0,
-     ]);
-
-     // ADDED: Total Discount and Total Void Amount
-     worksheet.addRow([
-       "Total Applied Discount:",
-       `₱${totalDiscount.toFixed(2)}`,
-     ]);
-     worksheet.addRow([
-       "Total Void Amount:",
-       `₱${totalVoidAmount.toFixed(2)}${
-         totalVoidTransactions > 0
-           ? ` (${totalVoidTransactions} transaction${
-               totalVoidTransactions !== 1 ? "s" : ""
-             })`
-           : ""
-       }`,
-     ]);
-
-     // Payment Methods Summary
-     if (
-       cashierData.payment_methods_summary &&
-       Object.keys(cashierData.payment_methods_summary).length > 0
-     ) {
-      
-
-       // Table Headers for Payment Methods
-       const paymentHeaderRow = worksheet.addRow([
-         "Payment Method",
-         "Transaction Count",
-         "Total Amount",
-       ]);
-
-       paymentHeaderRow.eachCell((cell) => {
-         cell.font = { bold: true, color: { argb: "FFFFFFFF" }, size: 11 };
-         cell.fill = {
-           type: "pattern",
-           pattern: "solid",
-           fgColor: { argb: "FF7B1FA2" },
-         };
-         cell.alignment = { horizontal: "center", vertical: "middle" };
-         cell.border = {
-           top: { style: "thin", color: { argb: "FF000000" } },
-           left: { style: "thin", color: { argb: "FF000000" } },
-           bottom: { style: "thin", color: { argb: "FF000000" } },
-           right: { style: "thin", color: { argb: "FF000000" } },
-         };
-       });
-
-       // Data rows for Payment Methods
-       const paymentMethods = Object.entries(
-         cashierData.payment_methods_summary
-       );
-       paymentMethods.forEach(([method, data], index) => {
-         const row = worksheet.addRow([
-           method,
-           data.transactionCount,
-           data.totalAmount,
-         ]);
-
-         row.eachCell((cell, colNumber) => {
-           cell.border = {
-             top: { style: "thin", color: { argb: "FFE0E0E0" } },
-             left: { style: "thin", color: { argb: "FFE0E0E0" } },
-             bottom: { style: "thin", color: { argb: "FFE0E0E0" } },
-             right: { style: "thin", color: { argb: "FFE0E0E0" } },
-           };
-           cell.alignment = { vertical: "middle" };
-
-           if (index % 2 === 0) {
-             cell.fill = {
-               type: "pattern",
-               pattern: "solid",
-               fgColor: { argb: "FFF8F8F8" },
-             };
-           }
-
-           if (colNumber === 3) {
-             cell.numFmt = "₱#,##0.00";
-             cell.alignment = { horizontal: "right", vertical: "middle" };
-           }
-
-           if (colNumber === 2) {
-             cell.alignment = { horizontal: "center", vertical: "middle" };
-           }
-         });
-       });
-
-       // Column widths for Payment Methods
-       worksheet.getColumn(1).width = 25;
-       worksheet.getColumn(2).width = 20;
-       worksheet.getColumn(3).width = 18;
-     }
-
-     // Orders Table
-     if (cashierData.session_orders && cashierData.session_orders.length > 0) {
-       worksheet.addRow([]);
-       const ordersHeaderRow = cashierData.payment_methods_summary
-         ? worksheet.rowCount + 1
-         : 13;
-       worksheet.mergeCells(`A${ordersHeaderRow}:H${ordersHeaderRow}`);
-       worksheet.getCell(`A${ordersHeaderRow}`).value = "ORDERS DURING SESSION";
-       worksheet.getCell(`A${ordersHeaderRow}`).font = {
-         bold: true,
-         size: 12,
-       };
-       worksheet.getCell(`A${ordersHeaderRow}`).fill = {
-         type: "pattern",
-         pattern: "solid",
-         fgColor: { argb: "FFBBDEFB" },
-       };
-
-       // Table Headers
-       const headerRow = worksheet.addRow([
-         "Order ID",
-         "Products",
-         "Total Amount",
-         "Order Type",
-         "Payment Method",
-         "Transaction Time",
-       ]);
-
-       headerRow.eachCell((cell) => {
-         cell.font = { bold: true, color: { argb: "FFFFFFFF" }, size: 11 };
-         cell.fill = {
-           type: "pattern",
-           pattern: "solid",
-           fgColor: { argb: "FF1976D2" },
-         };
-         cell.alignment = { horizontal: "center", vertical: "middle" };
-         cell.border = {
-           top: { style: "thin", color: { argb: "FF000000" } },
-           left: { style: "thin", color: { argb: "FF000000" } },
-           bottom: { style: "thin", color: { argb: "FF000000" } },
-           right: { style: "thin", color: { argb: "FF000000" } },
-         };
-       });
-
-       // Data rows
-       cashierData.session_orders.forEach((order, index) => {
-         const row = worksheet.addRow([
-           order.id,
-           formatProductNames(order),
-           parseFloat(order.total),
-           order.orderType,
-           order.payment_method,
-           new Date(order.created_at).toLocaleTimeString("en-PH"),
-         ]);
-
-         row.eachCell((cell, colNumber) => {
-           cell.border = {
-             top: { style: "thin", color: { argb: "FFE0E0E0" } },
-             left: { style: "thin", color: { argb: "FFE0E0E0" } },
-             bottom: { style: "thin", color: { argb: "FFE0E0E0" } },
-             right: { style: "thin", color: { argb: "FFE0E0E0" } },
-           };
-           cell.alignment = { vertical: "middle" };
-
-           if (index % 2 === 0) {
-             cell.fill = {
-               type: "pattern",
-               pattern: "solid",
-               fgColor: { argb: "FFF5F5F5" },
-             };
-           }
-
-           if (colNumber === 3) {
-             cell.numFmt = "₱#,##0.00";
-             cell.alignment = { horizontal: "right", vertical: "middle" };
-           }
-
-           if (colNumber === 2) {
-             cell.alignment = {
-               horizontal: "left",
-               vertical: "middle",
-               wrapText: true,
-             };
-           }
-         });
-       });
-
-       // Column widths
-       worksheet.getColumn(1).width = 12;
-       worksheet.getColumn(2).width = 40;
-       worksheet.getColumn(3).width = 15;
-       worksheet.getColumn(4).width = 15;
-       worksheet.getColumn(5).width = 18;
-       worksheet.getColumn(6).width = 18;
-     }
-
-     // Footer
-     const footerRowNum = worksheet.rowCount + 2;
-     worksheet.mergeCells(`A${footerRowNum}:H${footerRowNum}`);
-     const footerCell = worksheet.getCell(`A${footerRowNum}`);
-     footerCell.value = `Generated: ${new Date().toLocaleString(
-       "en-PH"
-     )} | Exported by: ${user?.name || "Admin"}`;
-     footerCell.font = { italic: true, size: 9, color: { argb: "FF757575" } };
-     footerCell.alignment = { horizontal: "center" };
-
-     // Save File
-     const buffer = await workbook.xlsx.writeBuffer();
-     const filename = `K-Street_Cashier_Session_${cashierData.user_email.replace(
-       /[^a-zA-Z0-9]/g,
-       "_"
-     )}_${new Date().toISOString().split("T")[0]}.xlsx`;
-     saveAs(
-       new Blob([buffer], {
-         type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-       }),
-       filename
-     );
-   } catch (error) {
-     console.error("Error exporting to Excel:", error);
-     alert("Error exporting to Excel. Please try again.");
-   }
- };
-
-const exportToExcel = async () => {
-  const filteredData =
-    activeReport === "sales" ? getFilteredSales() : getFilteredCashierLogs();
-
-  if (filteredData.length === 0) {
-    alert(
-      `No ${
-        activeReport === "sales" ? "sales" : "cashier"
-      } data to export for the selected range.`
-    );
-    return;
-  }
-
-  const workbook = new ExcelJS.Workbook();
-  const worksheet = workbook.addWorksheet(
-    activeReport === "sales" ? "Sales Report" : "Cashier Report"
-  );
-
-  // Company Header - MERGE HANGGANG J (10 COLUMNS)
-  worksheet.mergeCells("A1:J1");
-  const companyCell = worksheet.getCell("A1");
-  companyCell.value = "K - STREET";
-  companyCell.alignment = { horizontal: "center", vertical: "middle" };
-  companyCell.font = { size: 20, bold: true, color: { argb: "FFFFFFFF" } };
-  companyCell.fill = {
-    type: "pattern",
-    pattern: "solid",
-    fgColor: { argb: "FFFF0000" },
-  };
-  worksheet.getRow(1).height = 35;
-
-  // Report Type and Date Range Info - MERGE HANGGANG J
-  worksheet.mergeCells("A2:J2");
-  const reportTypeCell = worksheet.getCell("A2");
-  let rangeText = "All Time";
-  if (exportRange === "today") {
-    rangeText = `Today - ${new Date().toLocaleDateString()}`;
-  } else if (exportRange === "custom") {
-    rangeText = `${startDate} to ${endDate}`;
-  }
-  reportTypeCell.value = `${
-    activeReport === "sales" ? "Sales" : "Cashier"
-  } Report - Period: ${rangeText}`;
-  reportTypeCell.alignment = { horizontal: "center" };
-  reportTypeCell.font = { size: 12, italic: true };
-  reportTypeCell.fill = {
-    type: "pattern",
-    pattern: "solid",
-    fgColor: { argb: "FFFFEBEE" },
-  };
-
-  if (activeReport === "sales") {
-    // Sales Report Export Logic
-    const totalSales = filteredData.reduce(
-      (sum, sale) => sum + parseFloat(sale.total),
-      0
-    );
-    const totalTransactions = filteredData.length;
-    const avgTransaction =
-      totalTransactions > 0 ? totalSales / totalTransactions : 0;
-
-    // Calculate total discount for sales
-    const totalDiscount = filteredData.reduce((sum, sale) => {
-      if (sale.discountApplied) {
-        return sum + (parseFloat(sale.total) / 0.8) * 0.2;
-      }
-      return sum;
-    }, 0);
-
-    // Calculate total void amount for sales
-    const totalVoidAmount = filteredData
-      .filter(order => isOrderVoided(order))
-      .reduce((sum, order) => sum + parseFloat(order.total || 0), 0);
-
-    const totalVoidTransactions = filteredData.filter(order => isOrderVoided(order)).length;
-
-    const transactionDates = [
-      ...new Set(
-        filteredData.map((sale) =>
-          new Date(sale.created_at).toLocaleDateString("en-PH")
-        )
-      ),
-    ].join(", ");
-
-    // =========================================
-    // SALES SUMMARY - ILAGAY ANG TOTAL DISCOUNT DITO
-    // =========================================
-    let summaryRow = 3;
-    
-    worksheet.mergeCells(`A${summaryRow}:B${summaryRow}`);
-    worksheet.getCell(`A${summaryRow}`).value = "SALES SUMMARY";
-    worksheet.getCell(`A${summaryRow}`).font = { bold: true, size: 12 };
-    worksheet.getCell(`A${summaryRow}`).fill = {
-      type: "pattern",
-      pattern: "solid",
-      fgColor: { argb: "FFFFCDD2" },
-    };
-    summaryRow++;
-
-    worksheet.mergeCells(`A${summaryRow}:B${summaryRow}`);
-    worksheet.getCell(`A${summaryRow}`).value = `Total Sales: ₱${totalSales.toLocaleString(
-      "en-PH",
-      {
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2,
-      }
-    )}`;
-    worksheet.getCell(`A${summaryRow}`).font = { bold: true };
-    summaryRow++;
-
-    worksheet.mergeCells(`A${summaryRow}:B${summaryRow}`);
-    worksheet.getCell(`A${summaryRow}`).value = `Total Transactions: ${totalTransactions}`;
-    summaryRow++;
-
-    worksheet.mergeCells(`A${summaryRow}:B${summaryRow}`);
-    worksheet.getCell(`A${summaryRow}`).value = `Average Transaction: ₱${avgTransaction.toLocaleString("en-PH", {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    })}`;
-    summaryRow++;
-
-    // =========================================
-    // ITO ANG IMPORTANTE - TOTAL APPLIED DISCOUNT
-    // =========================================
-    worksheet.mergeCells(`A${summaryRow}:B${summaryRow}`);
-    worksheet.getCell(`A${summaryRow}`).value = `Total Applied Discount: ₱${totalDiscount.toLocaleString("en-PH", {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    })}`;
-    worksheet.getCell(`A${summaryRow}`).font = { bold: true, color: { argb: "FF15803D" } };
-    summaryRow++;
-
-    // =========================================
-    // ITO ANG IMPORTANTE - TOTAL VOID AMOUNT
-    // =========================================
-    worksheet.mergeCells(`A${summaryRow}:B${summaryRow}`);
-    worksheet.getCell(`A${summaryRow}`).value = `Total Void Amount: ₱${totalVoidAmount.toLocaleString("en-PH", {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    })}${totalVoidTransactions > 0 ? ` (${totalVoidTransactions} transaction${totalVoidTransactions !== 1 ? 's' : ''})` : ''}`;
-    worksheet.getCell(`A${summaryRow}`).font = { bold: true, color: { argb: "FFDC2626" } };
-    summaryRow++;
-
-    worksheet.mergeCells(`A${summaryRow}:B${summaryRow}`);
-    worksheet.getCell(`A${summaryRow}`).value = `Transaction Dates: ${transactionDates}`;
-    summaryRow++;
-
-    worksheet.addRow([]); // Empty row
-
-    // Table Headers
-    const headerRow = worksheet.addRow([
-      "Order ID",
-      "Products",
-      "Total Amount",
-      "Discount Applied",
-      "Amount Paid",
-      "Change",
-      "Cashier",
-      "Order Type",
-      "Payment Method",
-      "Transaction Time",
-    ]);
-
-    headerRow.eachCell((cell) => {
-      cell.font = { bold: true, color: { argb: "FFFFFFFF" }, size: 11 };
-      cell.fill = {
-        type: "pattern",
-        pattern: "solid",
-        fgColor: { argb: "FFD32F2F" },
-      };
-      cell.alignment = { horizontal: "center", vertical: "middle" };
-      cell.border = {
-        top: { style: "thin", color: { argb: "FF000000" } },
-        left: { style: "thin", color: { argb: "FF000000" } },
-        bottom: { style: "thin", color: { argb: "FF000000" } },
-        right: { style: "thin", color: { argb: "FF000000" } },
-      };
-    });
-    headerRow.height = 25;
-
-    // Data rows for Sales
-    filteredData.forEach((sale, index) => {
-      const discountAmount = sale.discountApplied ? (parseFloat(sale.total) / 0.8) * 0.2 : 0;
-      
-      const row = worksheet.addRow([
-        sale.id,
-        formatProductNames(sale),
-        parseFloat(sale.total),
-        sale.discountApplied ? `₱${discountAmount.toFixed(2)} (20%)` : "None",
-        parseFloat(sale.paidAmount),
-        parseFloat(sale.changeAmount),
-        sale.cashier || "Unknown",
-        sale.orderType,
-        sale.payment_method || "Unknown",
-        new Date(sale.created_at).toLocaleString("en-PH"),
-      ]);
-
-      row.eachCell((cell, colNumber) => {
-        cell.border = {
-          top: { style: "thin", color: { argb: "FFE0E0E0" } },
-          left: { style: "thin", color: { argb: "FFE0E0E0" } },
-          bottom: { style: "thin", color: { argb: "FFE0E0E0" } },
-          right: { style: "thin", color: { argb: "FFE0E0E0" } },
-        };
-
-        if (index % 2 === 0) {
-          cell.fill = {
-            type: "pattern",
-            pattern: "solid",
-            fgColor: { argb: "FFFFEBEE" },
-          };
-        }
-
-        // Currency formatting
-        if ([3, 5, 6].includes(colNumber)) {
-          cell.numFmt = "₱#,##0.00";
-          cell.alignment = { horizontal: "right", vertical: "middle" };
-        }
-
-        if (colNumber === 2) {
-          cell.alignment = {
-            horizontal: "left",
-            vertical: "middle",
-            wrapText: true,
-          };
-        }
-      });
-    });
-
-    // Column widths
-    worksheet.getColumn(1).width = 12;
-    worksheet.getColumn(2).width = 30;
-    worksheet.getColumn(3).width = 15;
-    worksheet.getColumn(4).width = 18;
-    worksheet.getColumn(5).width = 15;
-    worksheet.getColumn(6).width = 15;
-    worksheet.getColumn(7).width = 15;
-    worksheet.getColumn(8).width = 15;
-    worksheet.getColumn(9).width = 18;
-    worksheet.getColumn(10).width = 18;
-  } else {
-    // ====================================================
-    // CASHIER REPORT EXPORT LOGIC
-    // ====================================================
-    const totalSessions = filteredData.length;
-    const totalGrossSales = filteredData.reduce(
-      (sum, log) => sum + parseFloat(log.session_sales || 0),
-      0
-    );
-
-    // ===========================================
-    // IMPORTANT: KALKULAHIN ANG TOTAL DISCOUNT AT TOTAL VOID
-    // ===========================================
-    let totalAppliedDiscount = 0;
-    let totalVoidAmount = 0;
-    let totalVoidTransactions = 0;
-
-    // Calculate discount and void for each cashier session
-    filteredData.forEach(log => {
-      // Calculate discount for this session
-      if (log.session_orders) {
-        const sessionDiscount = log.session_orders.reduce((sum, order) => {
-          if (order.discountApplied) {
-            // Assuming 20% discount
-            return sum + (parseFloat(order.total) / 0.8) * 0.2;
-          }
-          return sum;
-        }, 0);
-        totalAppliedDiscount += sessionDiscount;
-      }
-
-      // Calculate void for this session
-      const sessionVoids = sales.filter(
-        (order) =>
-          order.userId === log.user_id &&
-          isOrderVoided(order) &&
-          new Date(order.created_at) >= new Date(log.login_time) &&
-          (!log.logout_time ||
-            new Date(order.created_at) <= new Date(log.logout_time))
-      );
-      
-      const sessionVoidAmount = sessionVoids.reduce(
-        (sum, order) => sum + parseFloat(order.total || 0),
-        0
-      );
-      totalVoidAmount += sessionVoidAmount;
-      totalVoidTransactions += sessionVoids.length;
-    });
-
-    // =========================================
-    // CASHIER SUMMARY - ILAGAY ANG TOTAL DISCOUNT AT VOID DITO
-    // =========================================
-    let summaryRow = 3;
-    
-    worksheet.mergeCells(`A${summaryRow}:C${summaryRow}`);
-    worksheet.getCell(`A${summaryRow}`).value = "CASHIER SESSION SUMMARY";
-    worksheet.getCell(`A${summaryRow}`).font = { bold: true, size: 12 };
-    worksheet.getCell(`A${summaryRow}`).fill = {
-      type: "pattern",
-      pattern: "solid",
-      fgColor: { argb: "FFFFCDD2" },
-    };
-    summaryRow++;
-
-    worksheet.mergeCells(`A${summaryRow}:C${summaryRow}`);
-    worksheet.getCell(`A${summaryRow}`).value = `Total Cashier Sessions: ${totalSessions}`;
-    worksheet.getCell(`A${summaryRow}`).font = { bold: true };
-    summaryRow++;
-
-    worksheet.mergeCells(`A${summaryRow}:C${summaryRow}`);
-    worksheet.getCell(`A${summaryRow}`).value = `Total Gross Sales: ₱${totalGrossSales.toLocaleString("en-PH", {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    })}`;
-    summaryRow++;
-
-    // =========================================
-    // ITO ANG IMPORTANTE - TOTAL APPLIED DISCOUNT
-    // =========================================
-    worksheet.mergeCells(`A${summaryRow}:C${summaryRow}`);
-    worksheet.getCell(`A${summaryRow}`).value = `Total Applied Discount: ₱${totalAppliedDiscount.toLocaleString("en-PH", {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    })}`;
-    worksheet.getCell(`A${summaryRow}`).font = { bold: true, color: { argb: "FF15803D" } };
-    summaryRow++;
-
-    // =========================================
-    // ITO ANG IMPORTANTE - TOTAL VOID AMOUNT
-    // =========================================
-    worksheet.mergeCells(`A${summaryRow}:C${summaryRow}`);
-    worksheet.getCell(`A${summaryRow}`).value = `Total Void Amount: ₱${totalVoidAmount.toLocaleString("en-PH", {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    })}${totalVoidTransactions > 0 ? ` (${totalVoidTransactions} transaction${totalVoidTransactions !== 1 ? 's' : ''})` : ''}`;
-    worksheet.getCell(`A${summaryRow}`).font = { bold: true, color: { argb: "FFDC2626" } };
-    summaryRow++;
-
-    worksheet.addRow([]); // Empty row
-
-    // Table Headers
-    const headerRow = worksheet.addRow([
-      "Cashier Email",
-      "Login Time",
-      "Logout Time",
-      "Session Duration",
-      "Starting Gross Sales",
-      "Ending Gross Sales",
-      "Sales During Session",
-      "Discount & Void Summary",
-      "Action",
-    ]);
-
-    headerRow.eachCell((cell) => {
-      cell.font = { bold: true, color: { argb: "FFFFFFFF" }, size: 11 };
-      cell.fill = {
-        type: "pattern",
-        pattern: "solid",
-        fgColor: { argb: "FFD32F2F" },
-      };
-      cell.alignment = { horizontal: "center", vertical: "middle" };
-      cell.border = {
-        top: { style: "thin", color: { argb: "FF000000" } },
-        left: { style: "thin", color: { argb: "FF000000" } },
-        bottom: { style: "thin", color: { argb: "FF000000" } },
-        right: { style: "thin", color: { argb: "FF000000" } },
-      };
-    });
-    headerRow.height = 25;
-
-    // Data rows
-    filteredData.forEach((log, index) => {
-      // Calculate discount for this session
-      const sessionDiscount = log.session_orders
-        ? log.session_orders.reduce((sum, order) => {
+  const exportCashierSessionToExcel = async (cashierData) => {
+    try {
+      // CALCULATE TOTAL DISCOUNT AND TOTAL VOID AMOUNT
+      const totalDiscount = cashierData.session_orders
+        ? cashierData.session_orders.reduce((sum, order) => {
             if (order.discountApplied) {
               return sum + (parseFloat(order.total) / 0.8) * 0.2;
             }
@@ -1916,123 +1400,1004 @@ const exportToExcel = async () => {
           }, 0)
         : 0;
 
-      // Calculate void for this session
-      const sessionVoids = sales.filter(
+      const totalVoidAmount = sales
+        .filter(
+          (order) =>
+            order.userId === cashierData.user_id &&
+            isOrderVoided(order) &&
+            new Date(order.created_at) >= new Date(cashierData.login_time) &&
+            (!cashierData.logout_time ||
+              new Date(order.created_at) <= new Date(cashierData.logout_time))
+        )
+        .reduce((sum, order) => sum + parseFloat(order.total || 0), 0);
+
+      const totalVoidTransactions = sales.filter(
         (order) =>
-          order.userId === log.user_id &&
+          order.userId === cashierData.user_id &&
           isOrderVoided(order) &&
-          new Date(order.created_at) >= new Date(log.login_time) &&
-          (!log.logout_time ||
-            new Date(order.created_at) <= new Date(log.logout_time))
-      );
-      
-      const sessionVoidAmount = sessionVoids.reduce(
-        (sum, order) => sum + parseFloat(order.total || 0),
-        0
-      );
-      const sessionVoidCount = sessionVoids.length;
+          new Date(order.created_at) >= new Date(cashierData.login_time) &&
+          (!cashierData.logout_time ||
+            new Date(order.created_at) <= new Date(cashierData.logout_time))
+      ).length;
 
-      // Create summary text
-      const discountVoidText = 
-        `Discount: ₱${sessionDiscount.toFixed(2)}\n` +
-        `Void: ₱${sessionVoidAmount.toFixed(2)}` +
-        (sessionVoidCount > 0 ? ` (${sessionVoidCount})` : '');
+      const workbook = new ExcelJS.Workbook();
+      const worksheet = workbook.addWorksheet("Cashier Session Details");
 
-      const row = worksheet.addRow([
-        log.user_email || "Unknown",
-        new Date(log.login_time).toLocaleString("en-PH"),
-        log.logout_time
-          ? new Date(log.logout_time).toLocaleString("en-PH")
+      // Company Header
+      worksheet.mergeCells("A1:H1");
+      const companyCell = worksheet.getCell("A1");
+      companyCell.value = "K - STREET";
+      companyCell.alignment = { horizontal: "center", vertical: "middle" };
+      companyCell.font = { size: 20, bold: true, color: { argb: "FFFFFFFF" } };
+      companyCell.fill = {
+        type: "pattern",
+        pattern: "solid",
+        fgColor: { argb: "FFFF0000" },
+      };
+      worksheet.getRow(1).height = 35;
+
+      // Report Title
+      worksheet.mergeCells("A2:H2");
+      const titleCell = worksheet.getCell("A2");
+      titleCell.value = "CASHIER SESSION REPORT";
+      titleCell.alignment = { horizontal: "center" };
+      titleCell.font = { size: 16, bold: true };
+      titleCell.fill = {
+        type: "pattern",
+        pattern: "solid",
+        fgColor: { argb: "FFFFEBEE" },
+      };
+
+      // Branch Info
+      worksheet.mergeCells("A3:H3");
+      const branchCell = worksheet.getCell("A3");
+      branchCell.value = `BRANCH: ${cashierData.branch || user?.branch}`;
+      branchCell.alignment = { horizontal: "center" };
+      branchCell.font = { size: 12, bold: true };
+      branchCell.fill = {
+        type: "pattern",
+        pattern: "solid",
+        fgColor: { argb: "FFE3F2FD" },
+      };
+
+      // Cashier Information
+      worksheet.mergeCells("A4:H4");
+      worksheet.getCell("A4").value = "CASHIER INFORMATION";
+      worksheet.getCell("A4").font = { bold: true, size: 12 };
+      worksheet.getCell("A4").fill = {
+        type: "pattern",
+        pattern: "solid",
+        fgColor: { argb: "FFFFCDD2" },
+      };
+
+      worksheet.addRow(["Cashier Email:", cashierData.user_email]);
+      worksheet.addRow([
+        "Login Time:",
+        new Date(cashierData.login_time).toLocaleString("en-PH"),
+      ]);
+      worksheet.addRow([
+        "Logout Time:",
+        cashierData.logout_time
+          ? new Date(cashierData.logout_time).toLocaleString("en-PH")
           : "Still Active",
-        calculateSessionDuration(log.login_time, log.logout_time),
-        parseFloat(log.start_gross_sales || 0),
-        parseFloat(log.end_gross_sales || 0),
-        parseFloat(log.session_sales || 0),
-        discountVoidText,
-        "View Details",
+      ]);
+      worksheet.addRow([
+        "Session Duration:",
+        calculateSessionDuration(
+          cashierData.login_time,
+          cashierData.logout_time
+        ),
       ]);
 
-      row.eachCell((cell, colNumber) => {
-        cell.border = {
-          top: { style: "thin", color: { argb: "FFE0E0E0" } },
-          left: { style: "thin", color: { argb: "FFE0E0E0" } },
-          bottom: { style: "thin", color: { argb: "FFE0E0E0" } },
-          right: { style: "thin", color: { argb: "FFE0E0E0" } },
-        };
+      // Sales Summary
+      worksheet.addRow([]);
+      worksheet.mergeCells("A10:H10");
+      worksheet.getCell("A10").value = "SALES SUMMARY";
+      worksheet.getCell("A10").font = { bold: true, size: 12 };
+      worksheet.getCell("A10").fill = {
+        type: "pattern",
+        pattern: "solid",
+        fgColor: { argb: "FFC8E6C9" },
+      };
 
-        // Discount & Void Summary column
-        if (colNumber === 8) {
-          cell.alignment = {
-            vertical: "top",
-            wrapText: true,
-            horizontal: "left"
-          };
-          if (sessionDiscount > 0 || sessionVoidAmount > 0) {
-            cell.font = { bold: true };
-          }
-        } else {
-          cell.alignment = { vertical: "middle" };
-        }
+      worksheet.addRow([
+        "Starting Gross Sales:",
+        `₱${parseFloat(cashierData.start_gross_sales || 0).toFixed(2)}`,
+      ]);
+      worksheet.addRow([
+        "Ending Gross Sales:",
+        `₱${parseFloat(cashierData.end_gross_sales || 0).toFixed(2)}`,
+      ]);
+      worksheet.addRow([
+        "Sales During Session:",
+        `₱${parseFloat(cashierData.session_sales || 0).toFixed(2)}`,
+      ]);
+      worksheet.addRow([
+        "Total Transactions:",
+        cashierData.session_orders?.length || 0,
+      ]);
 
-        if (index % 2 === 0) {
+      // ADDED: Total Discount and Total Void Amount
+      worksheet.addRow([
+        "Total Applied Discount:",
+        `₱${totalDiscount.toFixed(2)}`,
+      ]);
+      worksheet.addRow([
+        "Total Void Amount:",
+        `₱${totalVoidAmount.toFixed(2)}${
+          totalVoidTransactions > 0
+            ? ` (${totalVoidTransactions} transaction${
+                totalVoidTransactions !== 1 ? "s" : ""
+              })`
+            : ""
+        }`,
+      ]);
+
+      // Payment Methods Summary
+      if (
+        cashierData.payment_methods_summary &&
+        Object.keys(cashierData.payment_methods_summary).length > 0
+      ) {
+        // Table Headers for Payment Methods
+        const paymentHeaderRow = worksheet.addRow([
+          "Payment Method",
+          "Transaction Count",
+          "Total Amount",
+        ]);
+
+        paymentHeaderRow.eachCell((cell) => {
+          cell.font = { bold: true, color: { argb: "FFFFFFFF" }, size: 11 };
           cell.fill = {
             type: "pattern",
             pattern: "solid",
-            fgColor: { argb: "FFFFEBEE" },
+            fgColor: { argb: "FF7B1FA2" },
           };
-        }
-
-        // Currency columns
-        if ([5, 6, 7].includes(colNumber)) {
-          cell.numFmt = "₱#,##0.00";
-          cell.alignment = { horizontal: "right", vertical: "middle" };
-        }
-
-        // Time columns
-        if ([2, 3].includes(colNumber)) {
-          cell.alignment = {
-            horizontal: "left",
-            vertical: "middle",
-            wrapText: true,
+          cell.alignment = { horizontal: "center", vertical: "middle" };
+          cell.border = {
+            top: { style: "thin", color: { argb: "FF000000" } },
+            left: { style: "thin", color: { argb: "FF000000" } },
+            bottom: { style: "thin", color: { argb: "FF000000" } },
+            right: { style: "thin", color: { argb: "FF000000" } },
           };
+        });
+
+        // Data rows for Payment Methods
+        const paymentMethods = Object.entries(
+          cashierData.payment_methods_summary
+        );
+        paymentMethods.forEach(([method, data], index) => {
+          const row = worksheet.addRow([
+            method,
+            data.transactionCount,
+            data.totalAmount,
+          ]);
+
+          row.eachCell((cell, colNumber) => {
+            cell.border = {
+              top: { style: "thin", color: { argb: "FFE0E0E0" } },
+              left: { style: "thin", color: { argb: "FFE0E0E0" } },
+              bottom: { style: "thin", color: { argb: "FFE0E0E0" } },
+              right: { style: "thin", color: { argb: "FFE0E0E0" } },
+            };
+            cell.alignment = { vertical: "middle" };
+
+            if (index % 2 === 0) {
+              cell.fill = {
+                type: "pattern",
+                pattern: "solid",
+                fgColor: { argb: "FFF8F8F8" },
+              };
+            }
+
+            if (colNumber === 3) {
+              cell.numFmt = "₱#,##0.00";
+              cell.alignment = { horizontal: "right", vertical: "middle" };
+            }
+
+            if (colNumber === 2) {
+              cell.alignment = { horizontal: "center", vertical: "middle" };
+            }
+          });
+        });
+
+        // Column widths for Payment Methods
+        worksheet.getColumn(1).width = 25;
+        worksheet.getColumn(2).width = 20;
+        worksheet.getColumn(3).width = 18;
+      }
+
+      // Orders Table
+      if (cashierData.session_orders && cashierData.session_orders.length > 0) {
+        worksheet.addRow([]);
+        const ordersHeaderRow = cashierData.payment_methods_summary
+          ? worksheet.rowCount + 1
+          : 17;
+        worksheet.mergeCells(`A${ordersHeaderRow}:H${ordersHeaderRow}`);
+        worksheet.getCell(`A${ordersHeaderRow}`).value =
+          "ORDERS DURING SESSION";
+        worksheet.getCell(`A${ordersHeaderRow}`).font = {
+          bold: true,
+          size: 12,
+        };
+        worksheet.getCell(`A${ordersHeaderRow}`).fill = {
+          type: "pattern",
+          pattern: "solid",
+          fgColor: { argb: "FFBBDEFB" },
+        };
+
+        // Table Headers
+        const headerRow = worksheet.addRow([
+          "Order ID",
+          "Products",
+          "Total Amount",
+          "Order Type",
+          "Payment Method",
+          "Transaction Time",
+        ]);
+
+        headerRow.eachCell((cell) => {
+          cell.font = { bold: true, color: { argb: "FFFFFFFF" }, size: 11 };
+          cell.fill = {
+            type: "pattern",
+            pattern: "solid",
+            fgColor: { argb: "FF1976D2" },
+          };
+          cell.alignment = { horizontal: "center", vertical: "middle" };
+          cell.border = {
+            top: { style: "thin", color: { argb: "FF000000" } },
+            left: { style: "thin", color: { argb: "FF000000" } },
+            bottom: { style: "thin", color: { argb: "FF000000" } },
+            right: { style: "thin", color: { argb: "FF000000" } },
+          };
+        });
+
+        // Data rows
+        cashierData.session_orders.forEach((order, index) => {
+          const row = worksheet.addRow([
+            order.id,
+            formatProductNames(order),
+            parseFloat(order.total),
+            order.orderType,
+            order.payment_method,
+            new Date(order.created_at).toLocaleTimeString("en-PH"),
+          ]);
+
+          row.eachCell((cell, colNumber) => {
+            cell.border = {
+              top: { style: "thin", color: { argb: "FFE0E0E0" } },
+              left: { style: "thin", color: { argb: "FFE0E0E0" } },
+              bottom: { style: "thin", color: { argb: "FFE0E0E0" } },
+              right: { style: "thin", color: { argb: "FFE0E0E0" } },
+            };
+            cell.alignment = { vertical: "middle" };
+
+            if (index % 2 === 0) {
+              cell.fill = {
+                type: "pattern",
+                pattern: "solid",
+                fgColor: { argb: "FFF5F5F5" },
+              };
+            }
+
+            if (colNumber === 3) {
+              cell.numFmt = "₱#,##0.00";
+              cell.alignment = { horizontal: "right", vertical: "middle" };
+            }
+
+            if (colNumber === 2) {
+              cell.alignment = {
+                horizontal: "left",
+                vertical: "middle",
+                wrapText: true,
+              };
+            }
+          });
+        });
+
+        // Column widths
+        worksheet.getColumn(1).width = 12;
+        worksheet.getColumn(2).width = 40;
+        worksheet.getColumn(3).width = 15;
+        worksheet.getColumn(4).width = 15;
+        worksheet.getColumn(5).width = 18;
+        worksheet.getColumn(6).width = 18;
+      }
+
+      // Footer
+      const footerRowNum = worksheet.rowCount + 2;
+      worksheet.mergeCells(`A${footerRowNum}:H${footerRowNum}`);
+      const footerCell = worksheet.getCell(`A${footerRowNum}`);
+      footerCell.value = `Generated: ${new Date().toLocaleString(
+        "en-PH"
+      )} | Exported by: ${user?.name || "Admin"} | Branch: ${
+        cashierData.branch || user?.branch
+      }`;
+      footerCell.font = { italic: true, size: 9, color: { argb: "FF757575" } };
+      footerCell.alignment = { horizontal: "center" };
+
+      // Save File
+      const buffer = await workbook.xlsx.writeBuffer();
+      const filename = `K-Street_Cashier_Session_${cashierData.user_email.replace(
+        /[^a-zA-Z0-9]/g,
+        "_"
+      )}_${new Date().toISOString().split("T")[0]}.xlsx`;
+      saveAs(
+        new Blob([buffer], {
+          type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        }),
+        filename
+      );
+    } catch (error) {
+      console.error("Error exporting to Excel:", error);
+      alert("Error exporting to Excel. Please try again.");
+    }
+  };
+
+  const exportToExcel = async () => {
+    const filteredData =
+      activeReport === "sales" ? getFilteredSales() : getFilteredCashierLogs();
+
+    if (filteredData.length === 0) {
+      alert(
+        `No ${
+          activeReport === "sales" ? "sales" : "cashier"
+        } data to export for the selected range.`
+      );
+      return;
+    }
+
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet(
+      activeReport === "sales" ? "Sales Report" : "Cashier Report"
+    );
+
+    // Company Header - MERGE HANGGANG J (10 COLUMNS)
+    worksheet.mergeCells("A1:J1");
+    const companyCell = worksheet.getCell("A1");
+    companyCell.value = "K - STREET";
+    companyCell.alignment = { horizontal: "center", vertical: "middle" };
+    companyCell.font = { size: 20, bold: true, color: { argb: "FFFFFFFF" } };
+    companyCell.fill = {
+      type: "pattern",
+      pattern: "solid",
+      fgColor: { argb: "FFFF0000" },
+    };
+    worksheet.getRow(1).height = 35;
+
+    // Branch Info
+    worksheet.mergeCells("A2:J2");
+    const branchCell = worksheet.getCell("A2");
+    branchCell.value = `BRANCH: ${
+      isAdminOrOwner && selectedBranch !== "all"
+        ? selectedBranch
+        : isAdminOrOwner
+        ? "All Branches"
+        : user?.branch || "Unknown"
+    }`;
+    branchCell.alignment = { horizontal: "center" };
+    branchCell.font = { size: 12, bold: true };
+    branchCell.fill = {
+      type: "pattern",
+      pattern: "solid",
+      fgColor: { argb: "FFE3F2FD" },
+    };
+
+    // Report Type and Date Range Info
+    worksheet.mergeCells("A3:J3");
+    const reportTypeCell = worksheet.getCell("A3");
+    let rangeText = "All Time";
+    if (exportRange === "today") {
+      rangeText = `Today - ${new Date().toLocaleDateString()}`;
+    } else if (exportRange === "custom") {
+      rangeText = `${startDate} to ${endDate}`;
+    }
+    reportTypeCell.value = `${
+      activeReport === "sales" ? "Sales" : "Cashier"
+    } Report - Period: ${rangeText}`;
+    reportTypeCell.alignment = { horizontal: "center" };
+    reportTypeCell.font = { size: 12, italic: true };
+    reportTypeCell.fill = {
+      type: "pattern",
+      pattern: "solid",
+      fgColor: { argb: "FFFFEBEE" },
+    };
+
+    if (activeReport === "sales") {
+      // Sales Report Export Logic
+      const totalSales = filteredData.reduce(
+        (sum, sale) => sum + parseFloat(sale.total),
+        0
+      );
+      const totalTransactions = filteredData.length;
+      const avgTransaction =
+        totalTransactions > 0 ? totalSales / totalTransactions : 0;
+
+      // Calculate total discount for sales
+      const totalDiscount = filteredData.reduce((sum, sale) => {
+        if (sale.discountApplied) {
+          return sum + (parseFloat(sale.total) / 0.8) * 0.2;
         }
+        return sum;
+      }, 0);
+
+      // Calculate total void amount for sales
+      const totalVoidAmount = filteredData
+        .filter((order) => isOrderVoided(order))
+        .reduce((sum, order) => sum + parseFloat(order.total || 0), 0);
+
+      const totalVoidTransactions = filteredData.filter((order) =>
+        isOrderVoided(order)
+      ).length;
+
+      const transactionDates = [
+        ...new Set(
+          filteredData.map((sale) =>
+            new Date(sale.created_at).toLocaleDateString("en-PH")
+          )
+        ),
+      ].join(", ");
+
+      // SALES SUMMARY
+      let summaryRow = 4;
+
+      worksheet.mergeCells(`A${summaryRow}:B${summaryRow}`);
+      worksheet.getCell(`A${summaryRow}`).value = "SALES SUMMARY";
+      worksheet.getCell(`A${summaryRow}`).font = { bold: true, size: 12 };
+      worksheet.getCell(`A${summaryRow}`).fill = {
+        type: "pattern",
+        pattern: "solid",
+        fgColor: { argb: "FFFFCDD2" },
+      };
+      summaryRow++;
+
+      worksheet.mergeCells(`A${summaryRow}:B${summaryRow}`);
+      worksheet.getCell(
+        `A${summaryRow}`
+      ).value = `Total Sales: ₱${totalSales.toLocaleString("en-PH", {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      })}`;
+      worksheet.getCell(`A${summaryRow}`).font = { bold: true };
+      summaryRow++;
+
+      worksheet.mergeCells(`A${summaryRow}:B${summaryRow}`);
+      worksheet.getCell(
+        `A${summaryRow}`
+      ).value = `Total Transactions: ${totalTransactions}`;
+      summaryRow++;
+
+      worksheet.mergeCells(`A${summaryRow}:B${summaryRow}`);
+      worksheet.getCell(
+        `A${summaryRow}`
+      ).value = `Average Transaction: ₱${avgTransaction.toLocaleString(
+        "en-PH",
+        {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        }
+      )}`;
+      summaryRow++;
+
+      // TOTAL APPLIED DISCOUNT
+      worksheet.mergeCells(`A${summaryRow}:B${summaryRow}`);
+      worksheet.getCell(
+        `A${summaryRow}`
+      ).value = `Total Applied Discount: ₱${totalDiscount.toLocaleString(
+        "en-PH",
+        {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        }
+      )}`;
+      worksheet.getCell(`A${summaryRow}`).font = {
+        bold: true,
+        color: { argb: "FF15803D" },
+      };
+      summaryRow++;
+
+      // TOTAL VOID AMOUNT
+      worksheet.mergeCells(`A${summaryRow}:B${summaryRow}`);
+      worksheet.getCell(
+        `A${summaryRow}`
+      ).value = `Total Void Amount: ₱${totalVoidAmount.toLocaleString("en-PH", {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      })}${
+        totalVoidTransactions > 0
+          ? ` (${totalVoidTransactions} transaction${
+              totalVoidTransactions !== 1 ? "s" : ""
+            })`
+          : ""
+      }`;
+      worksheet.getCell(`A${summaryRow}`).font = {
+        bold: true,
+        color: { argb: "FFDC2626" },
+      };
+      summaryRow++;
+
+      worksheet.mergeCells(`A${summaryRow}:B${summaryRow}`);
+      worksheet.getCell(
+        `A${summaryRow}`
+      ).value = `Transaction Dates: ${transactionDates}`;
+      summaryRow++;
+
+      worksheet.addRow([]); // Empty row
+
+      // Table Headers - Add Branch column for admin
+      const headers = isAdminOrOwner
+        ? [
+            "Order ID",
+            "Branch",
+            "Products",
+            "Total Amount",
+            "Discount Applied",
+            "Amount Paid",
+            "Change",
+            "Cashier",
+            "Order Type",
+            "Payment Method",
+            "Transaction Time",
+          ]
+        : [
+            "Order ID",
+            "Products",
+            "Total Amount",
+            "Discount Applied",
+            "Amount Paid",
+            "Change",
+            "Cashier",
+            "Order Type",
+            "Payment Method",
+            "Transaction Time",
+          ];
+
+      const headerRow = worksheet.addRow(headers);
+
+      headerRow.eachCell((cell) => {
+        cell.font = { bold: true, color: { argb: "FFFFFFFF" }, size: 11 };
+        cell.fill = {
+          type: "pattern",
+          pattern: "solid",
+          fgColor: { argb: "FFD32F2F" },
+        };
+        cell.alignment = { horizontal: "center", vertical: "middle" };
+        cell.border = {
+          top: { style: "thin", color: { argb: "FF000000" } },
+          left: { style: "thin", color: { argb: "FF000000" } },
+          bottom: { style: "thin", color: { argb: "FF000000" } },
+          right: { style: "thin", color: { argb: "FF000000" } },
+        };
       });
-    });
+      headerRow.height = 25;
 
-    // Column widths
-    worksheet.getColumn(1).width = 25;
-    worksheet.getColumn(2).width = 20;
-    worksheet.getColumn(3).width = 20;
-    worksheet.getColumn(4).width = 18;
-    worksheet.getColumn(5).width = 20;
-    worksheet.getColumn(6).width = 20;
-    worksheet.getColumn(7).width = 20;
-    worksheet.getColumn(8).width = 25;
-    worksheet.getColumn(9).width = 15;
-  }
+      // Data rows for Sales
+      filteredData.forEach((sale, index) => {
+        const discountAmount = sale.discountApplied
+          ? (parseFloat(sale.total) / 0.8) * 0.2
+          : 0;
 
-  // FOOTER
-  const footerRowNum = worksheet.rowCount + 2;
-  worksheet.mergeCells(`A${footerRowNum}:J${footerRowNum}`);
-  const footerCell = worksheet.getCell(`A${footerRowNum}`);
-  footerCell.value = `Generated: ${new Date().toLocaleString(
-    "en-PH"
-  )} | Exported by: ${user?.name || "Admin"}`;
-  footerCell.font = { italic: true, size: 9, color: { argb: "FF757575" } };
-  footerCell.alignment = { horizontal: "center" };
+        const rowData = isAdminOrOwner
+          ? [
+              sale.id,
+              sale.branch || "Unknown",
+              formatProductNames(sale),
+              parseFloat(sale.total),
+              sale.discountApplied
+                ? `₱${discountAmount.toFixed(2)} (20%)`
+                : "None",
+              parseFloat(sale.paidAmount),
+              parseFloat(sale.changeAmount),
+              sale.cashier || "Unknown",
+              sale.orderType,
+              sale.payment_method || "Unknown",
+              new Date(sale.created_at).toLocaleString("en-PH"),
+            ]
+          : [
+              sale.id,
+              formatProductNames(sale),
+              parseFloat(sale.total),
+              sale.discountApplied
+                ? `₱${discountAmount.toFixed(2)} (20%)`
+                : "None",
+              parseFloat(sale.paidAmount),
+              parseFloat(sale.changeAmount),
+              sale.cashier || "Unknown",
+              sale.orderType,
+              sale.payment_method || "Unknown",
+              new Date(sale.created_at).toLocaleString("en-PH"),
+            ];
 
-  // Save File
-  const buffer = await workbook.xlsx.writeBuffer();
-  const filename = `K-Street-${
-    activeReport === "sales" ? "Sales" : "Cashier"
-  }_Report_${exportRange}_${new Date().toISOString().split("T")[0]}.xlsx`;
-  saveAs(
-    new Blob([buffer], {
-      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    }),
-    filename
-  );
-};
+        const row = worksheet.addRow(rowData);
+
+        row.eachCell((cell, colNumber) => {
+          cell.border = {
+            top: { style: "thin", color: { argb: "FFE0E0E0" } },
+            left: { style: "thin", color: { argb: "FFE0E0E0" } },
+            bottom: { style: "thin", color: { argb: "FFE0E0E0" } },
+            right: { style: "thin", color: { argb: "FFE0E0E0" } },
+          };
+
+          if (index % 2 === 0) {
+            cell.fill = {
+              type: "pattern",
+              pattern: "solid",
+              fgColor: { argb: "FFFFEBEE" },
+            };
+          }
+
+          // Currency formatting
+          const currencyColumns = isAdminOrOwner ? [4, 6, 7] : [3, 5, 6];
+          if (currencyColumns.includes(colNumber)) {
+            cell.numFmt = "₱#,##0.00";
+            cell.alignment = { horizontal: "right", vertical: "middle" };
+          }
+
+          // Product names column
+          const productColumn = isAdminOrOwner ? 3 : 2;
+          if (colNumber === productColumn) {
+            cell.alignment = {
+              horizontal: "left",
+              vertical: "middle",
+              wrapText: true,
+            };
+          }
+        });
+      });
+
+      // Column widths
+      if (isAdminOrOwner) {
+        worksheet.getColumn(1).width = 12;
+        worksheet.getColumn(2).width = 15;
+        worksheet.getColumn(3).width = 30;
+        worksheet.getColumn(4).width = 15;
+        worksheet.getColumn(5).width = 18;
+        worksheet.getColumn(6).width = 15;
+        worksheet.getColumn(7).width = 15;
+        worksheet.getColumn(8).width = 15;
+        worksheet.getColumn(9).width = 15;
+        worksheet.getColumn(10).width = 18;
+        worksheet.getColumn(11).width = 18;
+      } else {
+        worksheet.getColumn(1).width = 12;
+        worksheet.getColumn(2).width = 30;
+        worksheet.getColumn(3).width = 15;
+        worksheet.getColumn(4).width = 18;
+        worksheet.getColumn(5).width = 15;
+        worksheet.getColumn(6).width = 15;
+        worksheet.getColumn(7).width = 15;
+        worksheet.getColumn(8).width = 15;
+        worksheet.getColumn(9).width = 18;
+        worksheet.getColumn(10).width = 18;
+      }
+    } else {
+      // CASHIER REPORT EXPORT LOGIC
+      const totalSessions = filteredData.length;
+      const totalGrossSales = filteredData.reduce(
+        (sum, log) => sum + parseFloat(log.session_sales || 0),
+        0
+      );
+
+      // IMPORTANT: KALKULAHIN ANG TOTAL DISCOUNT AT TOTAL VOID
+      let totalAppliedDiscount = 0;
+      let totalVoidAmount = 0;
+      let totalVoidTransactions = 0;
+
+      // Calculate discount and void for each cashier session
+      filteredData.forEach((log) => {
+        // Calculate discount for this session
+        if (log.session_orders) {
+          const sessionDiscount = log.session_orders.reduce((sum, order) => {
+            if (order.discountApplied) {
+              return sum + (parseFloat(order.total) / 0.8) * 0.2;
+            }
+            return sum;
+          }, 0);
+          totalAppliedDiscount += sessionDiscount;
+        }
+
+        // Calculate void for this session
+        const sessionVoids = sales.filter(
+          (order) =>
+            order.userId === log.user_id &&
+            isOrderVoided(order) &&
+            new Date(order.created_at) >= new Date(log.login_time) &&
+            (!log.logout_time ||
+              new Date(order.created_at) <= new Date(log.logout_time)) &&
+            order.branch === log.branch
+        );
+
+        const sessionVoidAmount = sessionVoids.reduce(
+          (sum, order) => sum + parseFloat(order.total || 0),
+          0
+        );
+        totalVoidAmount += sessionVoidAmount;
+        totalVoidTransactions += sessionVoids.length;
+      });
+
+      // CASHIER SUMMARY
+      let summaryRow = 4;
+
+      worksheet.mergeCells(`A${summaryRow}:C${summaryRow}`);
+      worksheet.getCell(`A${summaryRow}`).value = "CASHIER SESSION SUMMARY";
+      worksheet.getCell(`A${summaryRow}`).font = { bold: true, size: 12 };
+      worksheet.getCell(`A${summaryRow}`).fill = {
+        type: "pattern",
+        pattern: "solid",
+        fgColor: { argb: "FFFFCDD2" },
+      };
+      summaryRow++;
+
+      worksheet.mergeCells(`A${summaryRow}:C${summaryRow}`);
+      worksheet.getCell(
+        `A${summaryRow}`
+      ).value = `Total Cashier Sessions: ${totalSessions}`;
+      worksheet.getCell(`A${summaryRow}`).font = { bold: true };
+      summaryRow++;
+
+      worksheet.mergeCells(`A${summaryRow}:C${summaryRow}`);
+      worksheet.getCell(
+        `A${summaryRow}`
+      ).value = `Total Gross Sales: ₱${totalGrossSales.toLocaleString("en-PH", {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      })}`;
+      summaryRow++;
+
+      // TOTAL APPLIED DISCOUNT
+      worksheet.mergeCells(`A${summaryRow}:C${summaryRow}`);
+      worksheet.getCell(
+        `A${summaryRow}`
+      ).value = `Total Applied Discount: ₱${totalAppliedDiscount.toLocaleString(
+        "en-PH",
+        {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        }
+      )}`;
+      worksheet.getCell(`A${summaryRow}`).font = {
+        bold: true,
+        color: { argb: "FF15803D" },
+      };
+      summaryRow++;
+
+      // TOTAL VOID AMOUNT
+      worksheet.mergeCells(`A${summaryRow}:C${summaryRow}`);
+      worksheet.getCell(
+        `A${summaryRow}`
+      ).value = `Total Void Amount: ₱${totalVoidAmount.toLocaleString("en-PH", {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      })}${
+        totalVoidTransactions > 0
+          ? ` (${totalVoidTransactions} transaction${
+              totalVoidTransactions !== 1 ? "s" : ""
+            })`
+          : ""
+      }`;
+      worksheet.getCell(`A${summaryRow}`).font = {
+        bold: true,
+        color: { argb: "FFDC2626" },
+      };
+      summaryRow++;
+
+      worksheet.addRow([]); // Empty row
+
+      // Table Headers
+      const headers = isAdminOrOwner
+        ? [
+            "Branch",
+            "Cashier Email",
+            "Login Time",
+            "Logout Time",
+            "Session Duration",
+            "Starting Gross Sales",
+            "Ending Gross Sales",
+            "Sales During Session",
+            "Discount & Void Summary",
+            "Action",
+          ]
+        : [
+            "Cashier Email",
+            "Login Time",
+            "Logout Time",
+            "Session Duration",
+            "Starting Gross Sales",
+            "Ending Gross Sales",
+            "Sales During Session",
+            "Discount & Void Summary",
+            "Action",
+          ];
+
+      const headerRow = worksheet.addRow(headers);
+
+      headerRow.eachCell((cell) => {
+        cell.font = { bold: true, color: { argb: "FFFFFFFF" }, size: 11 };
+        cell.fill = {
+          type: "pattern",
+          pattern: "solid",
+          fgColor: { argb: "FFD32F2F" },
+        };
+        cell.alignment = { horizontal: "center", vertical: "middle" };
+        cell.border = {
+          top: { style: "thin", color: { argb: "FF000000" } },
+          left: { style: "thin", color: { argb: "FF000000" } },
+          bottom: { style: "thin", color: { argb: "FF000000" } },
+          right: { style: "thin", color: { argb: "FF000000" } },
+        };
+      });
+      headerRow.height = 25;
+
+      // Data rows
+      filteredData.forEach((log, index) => {
+        // Calculate discount for this session
+        const sessionDiscount = log.session_orders
+          ? log.session_orders.reduce((sum, order) => {
+              if (order.discountApplied) {
+                return sum + (parseFloat(order.total) / 0.8) * 0.2;
+              }
+              return sum;
+            }, 0)
+          : 0;
+
+        // Calculate void for this session
+        const sessionVoids = sales.filter(
+          (order) =>
+            order.userId === log.user_id &&
+            isOrderVoided(order) &&
+            new Date(order.created_at) >= new Date(log.login_time) &&
+            (!log.logout_time ||
+              new Date(order.created_at) <= new Date(log.logout_time)) &&
+            order.branch === log.branch
+        );
+
+        const sessionVoidAmount = sessionVoids.reduce(
+          (sum, order) => sum + parseFloat(order.total || 0),
+          0
+        );
+        const sessionVoidCount = sessionVoids.length;
+
+        // Create summary text
+        const discountVoidText =
+          `Discount: ₱${sessionDiscount.toFixed(2)}\n` +
+          `Void: ₱${sessionVoidAmount.toFixed(2)}` +
+          (sessionVoidCount > 0 ? ` (${sessionVoidCount})` : "");
+
+        const rowData = isAdminOrOwner
+          ? [
+              log.branch || "Unknown",
+              log.user_email || "Unknown",
+              new Date(log.login_time).toLocaleString("en-PH"),
+              log.logout_time
+                ? new Date(log.logout_time).toLocaleString("en-PH")
+                : "Still Active",
+              calculateSessionDuration(log.login_time, log.logout_time),
+              parseFloat(log.start_gross_sales || 0),
+              parseFloat(log.end_gross_sales || 0),
+              parseFloat(log.session_sales || 0),
+              discountVoidText,
+              "View Details",
+            ]
+          : [
+              log.user_email || "Unknown",
+              new Date(log.login_time).toLocaleString("en-PH"),
+              log.logout_time
+                ? new Date(log.logout_time).toLocaleString("en-PH")
+                : "Still Active",
+              calculateSessionDuration(log.login_time, log.logout_time),
+              parseFloat(log.start_gross_sales || 0),
+              parseFloat(log.end_gross_sales || 0),
+              parseFloat(log.session_sales || 0),
+              discountVoidText,
+              "View Details",
+            ];
+
+        const row = worksheet.addRow(rowData);
+
+        row.eachCell((cell, colNumber) => {
+          cell.border = {
+            top: { style: "thin", color: { argb: "FFE0E0E0" } },
+            left: { style: "thin", color: { argb: "FFE0E0E0" } },
+            bottom: { style: "thin", color: { argb: "FFE0E0E0" } },
+            right: { style: "thin", color: { argb: "FFE0E0E0" } },
+          };
+
+          // Discount & Void Summary column
+          const summaryColumn = isAdminOrOwner ? 9 : 8;
+          if (colNumber === summaryColumn) {
+            cell.alignment = {
+              vertical: "top",
+              wrapText: true,
+              horizontal: "left",
+            };
+            if (sessionDiscount > 0 || sessionVoidAmount > 0) {
+              cell.font = { bold: true };
+            }
+          } else {
+            cell.alignment = { vertical: "middle" };
+          }
+
+          if (index % 2 === 0) {
+            cell.fill = {
+              type: "pattern",
+              pattern: "solid",
+              fgColor: { argb: "FFFFEBEE" },
+            };
+          }
+
+          // Currency columns
+          const currencyColumns = isAdminOrOwner ? [6, 7, 8] : [5, 6, 7];
+          if (currencyColumns.includes(colNumber)) {
+            cell.numFmt = "₱#,##0.00";
+            cell.alignment = { horizontal: "right", vertical: "middle" };
+          }
+
+          // Time columns
+          const timeColumns = isAdminOrOwner ? [3, 4] : [2, 3];
+          if (timeColumns.includes(colNumber)) {
+            cell.alignment = {
+              horizontal: "left",
+              vertical: "middle",
+              wrapText: true,
+            };
+          }
+        });
+      });
+
+      // Column widths
+      if (isAdminOrOwner) {
+        worksheet.getColumn(1).width = 15;
+        worksheet.getColumn(2).width = 25;
+        worksheet.getColumn(3).width = 20;
+        worksheet.getColumn(4).width = 20;
+        worksheet.getColumn(5).width = 18;
+        worksheet.getColumn(6).width = 20;
+        worksheet.getColumn(7).width = 20;
+        worksheet.getColumn(8).width = 20;
+        worksheet.getColumn(9).width = 25;
+        worksheet.getColumn(10).width = 15;
+      } else {
+        worksheet.getColumn(1).width = 25;
+        worksheet.getColumn(2).width = 20;
+        worksheet.getColumn(3).width = 20;
+        worksheet.getColumn(4).width = 18;
+        worksheet.getColumn(5).width = 20;
+        worksheet.getColumn(6).width = 20;
+        worksheet.getColumn(7).width = 20;
+        worksheet.getColumn(8).width = 25;
+        worksheet.getColumn(9).width = 15;
+      }
+    }
+
+    // FOOTER
+    const footerRowNum = worksheet.rowCount + 2;
+    worksheet.mergeCells(`A${footerRowNum}:J${footerRowNum}`);
+    const footerCell = worksheet.getCell(`A${footerRowNum}`);
+    footerCell.value = `Generated: ${new Date().toLocaleString(
+      "en-PH"
+    )} | Exported by: ${user?.name || "Admin"} | ${
+      isAdminOrOwner && selectedBranch !== "all"
+        ? `Branch: ${selectedBranch}`
+        : isAdminOrOwner
+        ? "All Branches"
+        : `Branch: ${user?.branch || "Unknown"}`
+    }`;
+    footerCell.font = { italic: true, size: 9, color: { argb: "FF757575" } };
+    footerCell.alignment = { horizontal: "center" };
+
+    // Save File
+    const buffer = await workbook.xlsx.writeBuffer();
+    const filename = `K-Street-${
+      activeReport === "sales" ? "Sales" : "Cashier"
+    }_Report_${
+      isAdminOrOwner && selectedBranch !== "all" ? selectedBranch + "_" : ""
+    }${exportRange}_${new Date().toISOString().split("T")[0]}.xlsx`;
+    saveAs(
+      new Blob([buffer], {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      }),
+      filename
+    );
+  };
 
   // Pagination logic for Sales Report
   const indexOfLastItem = currentPage * itemsPerPage;
@@ -2085,10 +2450,39 @@ const exportToExcel = async () => {
     setCashierCurrentPage(1);
   };
 
+  // Check if user is loaded
+  if (!user) {
+    return (
+      <div className="p-6 min-h-screen">
+        <div className="max-w-7xl mx-auto bg-white p-6 rounded-lg shadow">
+          <div className="text-center py-12">
+            <p className="text-gray-500 font-medium">
+              Please login to access sales reports
+            </p>
+            <button
+              onClick={() => (window.location.href = "/login")}
+              className="mt-4 bg-red-600 text-white px-6 py-2 rounded-lg hover:bg-red-700"
+            >
+              Go to Login
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="p-6 min-h-screen">
       <div className="max-w-7xl mx-auto bg-white p-6 rounded-lg shadow">
-        <h1 className="text-2xl font-bold mb-4">REPORTS</h1>
+        {/* HEADER WITH BRANCH INFO */}
+        <div className="flex justify-between items-center mb-4">
+          <h1 className="text-2xl font-bold">SALES REPORTS</h1>
+          <div className="flex items-center gap-4">
+           
+
+           
+          </div>
+        </div>
 
         {/* Report Navigation Headers */}
         <div className="mb-6 bg-gradient-to-r from-red-50 to-red-100 p-4 rounded-lg border border-red-200">
@@ -2123,17 +2517,6 @@ const exportToExcel = async () => {
               }`}
             >
               VOID REPORTS
-            </button>
-
-            <button
-              onClick={() => handleReportNavigation("employees")}
-              className={`px-6 py-3 rounded-lg font-semibold text-sm transition-all duration-200 ${
-                activeReport === "employees"
-                  ? "bg-red-600 text-white shadow-lg transform scale-105"
-                  : "bg-white text-gray-700 hover:bg-red-50 border border-red-200"
-              }`}
-            >
-              EMPLOYEES REPORT
             </button>
           </div>
         </div>
@@ -2181,6 +2564,25 @@ const exportToExcel = async () => {
                 </div>
               </>
             )}
+            {isAdminOrOwner && (
+              
+                 
+                  <select
+                    value={selectedBranch}
+                    onChange={(e) => setSelectedBranch(e.target.value)}
+                    className="border border-gray-300 rounded px-3 py-2"
+                  >
+                    <option value="all">All Branches</option>
+                    {allBranches
+                      .filter((branch) => branch !== "all")
+                      .map((branch) => (
+                        <option key={branch} value={branch}>
+                          {branch}
+                        </option>
+                      ))}
+                  </select>
+               
+            )}
 
             <button
               onClick={exportToExcel}
@@ -2202,6 +2604,11 @@ const exportToExcel = async () => {
                     <th className="px-6 py-4 text-left text-sm font-semibold tracking-wide">
                       #
                     </th>
+                    {isAdminOrOwner && (
+                      <th className="px-6 py-4 text-left text-sm font-semibold tracking-wide">
+                        Branch
+                      </th>
+                    )}
                     <th className="px-3 py-4 text-left text-sm font-semibold tracking-wide">
                       Date & Time
                     </th>
@@ -2241,6 +2648,11 @@ const exportToExcel = async () => {
                         #{sale.id}
                         {getVoidBadge(sale)}
                       </td>
+                      {isAdminOrOwner && (
+                        <td className="px-6 py-4 text-sm font-medium text-blue-700">
+                          {sale.branch || "Unknown"}
+                        </td>
+                      )}
                       <td className="px-2 py-1 text-sm text-gray-600">
                         {new Date(sale.created_at).toLocaleString("en-PH", {
                           month: "short",
@@ -2308,10 +2720,28 @@ const exportToExcel = async () => {
             {nonVoidedSales.length === 0 && (
               <div className="text-center py-12">
                 <p className="text-gray-500 font-medium">
-                  No sales data available
+                  {isAdminOrOwner ? (
+                    selectedBranch !== "all" ? (
+                      <>
+                        No sales data available for branch:{" "}
+                        <strong>{selectedBranch}</strong>
+                      </>
+                    ) : (
+                      "No sales data available in any branch"
+                    )
+                  ) : (
+                    <>
+                      No sales data available for branch:{" "}
+                      <strong>{user.branch}</strong>
+                    </>
+                  )}
                 </p>
                 <p className="text-gray-400 text-sm mt-1">
-                  Sales will appear here once transactions are made
+                  {isAdminOrOwner
+                    ? selectedBranch !== "all"
+                      ? "Sales will appear here once transactions are made in this branch"
+                      : "Sales will appear here once transactions are made in any branch"
+                    : "Sales will appear here once transactions are made in your branch"}
                 </p>
               </div>
             )}
@@ -2367,6 +2797,11 @@ const exportToExcel = async () => {
               <table className="w-full">
                 <thead>
                   <tr className="bg-red-500 text-white">
+                    {isAdminOrOwner && (
+                      <th className="px-6 py-4 text-left text-sm font-semibold tracking-wide">
+                        Branch
+                      </th>
+                    )}
                     <th className="px-6 py-4 text-left text-sm font-semibold tracking-wide">
                       Cashier Email
                     </th>
@@ -2421,7 +2856,8 @@ const exportToExcel = async () => {
                             new Date(log.login_time) &&
                           (!log.logout_time ||
                             new Date(order.created_at) <=
-                              new Date(log.logout_time))
+                              new Date(log.logout_time)) &&
+                          order.branch === log.branch
                       )
                       .reduce(
                         (sum, order) => sum + parseFloat(order.total || 0),
@@ -2433,6 +2869,11 @@ const exportToExcel = async () => {
                         key={log.id}
                         className="hover:bg-gradient-to-r hover:from-red-50 hover:to-red-50 transition-colors duration-150"
                       >
+                        {isAdminOrOwner && (
+                          <td className="px-6 py-4 text-sm font-medium text-blue-700">
+                            {log.branch || "Unknown"}
+                          </td>
+                        )}
                         <td className="px-6 py-4 text-sm font-medium text-gray-900">
                           {log.user_email || "Unknown"}
                         </td>
@@ -2502,11 +2943,28 @@ const exportToExcel = async () => {
             {getFilteredCashierLogs().length === 0 && (
               <div className="text-center py-12">
                 <p className="text-gray-500 font-medium">
-                  No cashier session data available
+                  {isAdminOrOwner ? (
+                    selectedBranch !== "all" ? (
+                      <>
+                        No cashier session data available for branch:{" "}
+                        <strong>{selectedBranch}</strong>
+                      </>
+                    ) : (
+                      "No cashier session data available in any branch"
+                    )
+                  ) : (
+                    <>
+                      No cashier session data available for branch:{" "}
+                      <strong>{user.branch}</strong>
+                    </>
+                  )}
                 </p>
                 <p className="text-gray-400 text-sm mt-1">
-                  Cashier sessions will appear here once cashiers use the
-                  Open/Close POS function
+                  {isAdminOrOwner
+                    ? selectedBranch !== "all"
+                      ? "Cashier sessions will appear here once cashiers use the Open/Close POS function in this branch"
+                      : "Cashier sessions will appear here once cashiers use the Open/Close POS function in any branch"
+                    : "Cashier sessions will appear here once cashiers use the Open/Close POS function in your branch"}
                 </p>
               </div>
             )}
@@ -2573,6 +3031,11 @@ const exportToExcel = async () => {
                     <th className="px-6 py-4 text-left text-sm font-semibold tracking-wide">
                       Order ID
                     </th>
+                    {isAdminOrOwner && (
+                      <th className="px-6 py-4 text-left text-sm font-semibold tracking-wide">
+                        Branch
+                      </th>
+                    )}
                     <th className="px-6 py-4 text-left text-sm font-semibold tracking-wide">
                       Date Voided
                     </th>
@@ -2629,6 +3092,11 @@ const exportToExcel = async () => {
                             VOIDED
                           </span>
                         </td>
+                        {isAdminOrOwner && (
+                          <td className="px-6 py-4 text-sm font-medium text-blue-700">
+                            {order.branch || "Unknown"}
+                          </td>
+                        )}
                         <td className="px-6 py-4 text-sm text-gray-600">
                           {order.voided_at
                             ? new Date(order.voided_at).toLocaleString("en-PH")
@@ -2692,10 +3160,28 @@ const exportToExcel = async () => {
             {sales.filter((order) => isOrderVoided(order)).length === 0 && (
               <div className="text-center py-12">
                 <p className="text-gray-500 font-medium">
-                  No voided orders found
+                  {isAdminOrOwner ? (
+                    selectedBranch !== "all" ? (
+                      <>
+                        No voided orders found in branch:{" "}
+                        <strong>{selectedBranch}</strong>
+                      </>
+                    ) : (
+                      "No voided orders found in any branch"
+                    )
+                  ) : (
+                    <>
+                      No voided orders found in branch:{" "}
+                      <strong>{user.branch}</strong>
+                    </>
+                  )}
                 </p>
                 <p className="text-gray-400 text-sm mt-1">
-                  Voided orders will appear here once transactions are voided
+                  {isAdminOrOwner
+                    ? selectedBranch !== "all"
+                      ? "Voided orders will appear here once transactions are voided in this branch"
+                      : "Voided orders will appear here once transactions are voided in any branch"
+                    : "Voided orders will appear here once transactions are voided in your branch"}
                 </p>
               </div>
             )}
@@ -2782,6 +3268,7 @@ const exportToExcel = async () => {
           </div>
         )}
       </div>
+
       {/* Receipt Modal */}
       {showReceipt && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
@@ -2837,6 +3324,12 @@ const exportToExcel = async () => {
                   K - Street Mc Arthur Highway, Magaspac, Gerona, Tarlac
                 </h1>
                 <div className="border-t-2 border-b-2 border-dashed border-gray-800 py-2 my-2">
+                  {isAdminOrOwner && (
+                    <div className="mb-2">
+                      <span className="font-bold">Branch: </span>
+                      {showReceipt.branch || user?.branch}
+                    </div>
+                  )}
                   {isOrderVoided(showReceipt) && (
                     <div className="bg-red-100 border border-red-300 p-2 mb-2 rounded">
                       <p className="font-bold text-red-700">
@@ -2986,7 +3479,8 @@ const exportToExcel = async () => {
           </div>
         </div>
       )}
-    
+
+      {/* Cashier Details Modal */}
       {showCashierDetails && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-2xl shadow-2xl max-w-6xl w-full max-h-[90vh] overflow-hidden">
@@ -3020,6 +3514,9 @@ const exportToExcel = async () => {
                       CASHIER SESSION REPORT
                     </h2>
                   </div>
+                  <p className="text-sm text-gray-500">
+                    Branch: {showCashierDetails.branch || user?.branch}
+                  </p>
                 </div>
 
                 {/* Session Information */}
@@ -3088,7 +3585,6 @@ const exportToExcel = async () => {
                         ? showCashierDetails.session_orders.reduce(
                             (sum, order) => {
                               if (order.discountApplied) {
-                                // Assuming 20% discount
                                 return (
                                   sum + (parseFloat(order.total) / 0.8) * 0.2
                                 );
@@ -3109,7 +3605,8 @@ const exportToExcel = async () => {
                               new Date(showCashierDetails.login_time) &&
                             (!showCashierDetails.logout_time ||
                               new Date(order.created_at) <=
-                                new Date(showCashierDetails.logout_time))
+                                new Date(showCashierDetails.logout_time)) &&
+                            order.branch === showCashierDetails.branch
                         )
                         .reduce(
                           (sum, order) => sum + parseFloat(order.total || 0),
@@ -3125,7 +3622,8 @@ const exportToExcel = async () => {
                             new Date(showCashierDetails.login_time) &&
                           (!showCashierDetails.logout_time ||
                             new Date(order.created_at) <=
-                              new Date(showCashierDetails.logout_time))
+                              new Date(showCashierDetails.logout_time)) &&
+                          order.branch === showCashierDetails.branch
                       ).length;
 
                       return (
@@ -3208,6 +3706,11 @@ const exportToExcel = async () => {
                               <th className="border border-gray-300 px-3 py-2 text-left">
                                 Order ID
                               </th>
+                              {isAdminOrOwner && (
+                                <th className="border border-gray-300 px-3 py-2 text-left">
+                                  Branch
+                                </th>
+                              )}
                               <th className="border border-gray-300 px-3 py-2 text-left">
                                 Products
                               </th>
@@ -3231,6 +3734,11 @@ const exportToExcel = async () => {
                                 <td className="border border-gray-300 px-3 py-2">
                                   #{order.id}
                                 </td>
+                                {isAdminOrOwner && (
+                                  <td className="border border-gray-300 px-3 py-2">
+                                    {order.branch || "Unknown"}
+                                  </td>
+                                )}
                                 <td className="border border-gray-300 px-3 py-2">
                                   {formatProductNames(order)}
                                 </td>
@@ -3262,6 +3770,9 @@ const exportToExcel = async () => {
                     Report Generated: {new Date().toLocaleString("en-PH")}
                   </p>
                   <p className="text-gray-500 text-sm">K-Street POS System</p>
+                  <p className="text-gray-400 text-xs">
+                    Branch: {showCashierDetails.branch || user?.branch}
+                  </p>
                 </div>
               </div>
             </div>
@@ -3335,6 +3846,7 @@ const exportToExcel = async () => {
           </div>
         </div>
       )}
+
       {/* Void Confirmation Modal */}
       {showVoidModal && orderToVoid && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
@@ -3380,6 +3892,9 @@ const exportToExcel = async () => {
                   Order #{orderToVoid.id} for ₱
                   {parseFloat(orderToVoid.total).toFixed(2)} will be marked as
                   voided and removed from sales calculations.
+                </p>
+                <p className="text-red-600 text-xs mt-1">
+                  Branch: {orderToVoid.branch || user?.branch}
                 </p>
               </div>
 
@@ -3437,6 +3952,12 @@ const exportToExcel = async () => {
                         {new Date(orderToVoid.created_at).toLocaleString(
                           "en-PH"
                         )}
+                      </span>
+                    </div>
+                    <div className="col-span-2">
+                      <span className="text-gray-500">Branch:</span>
+                      <span className="font-medium ml-2">
+                        {orderToVoid.branch || user?.branch}
                       </span>
                     </div>
                   </div>
@@ -3513,6 +4034,7 @@ const exportToExcel = async () => {
           </div>
         </div>
       )}
+
       {/* Success Modal */}
       {showSuccessModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">

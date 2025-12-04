@@ -10,17 +10,22 @@ function Navbar({
   systemName = "Food Hub System",
   showWelcome = true,
 }) {
+  // Check user role
+  const isAdminOrOwner = user?.role === "admin" || user?.role === "owner";
+  const isCashier = user?.role === "cashier";
+  const isManager = user?.role === "manager";
+
   return (
-    <header className="bg-white shadow-2g sticky top-0 z-10">
+    <header className="bg-white shadow-lg sticky top-0 z-10">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between items-center h-20">
           {/* Left Section - Logo and System Name */}
           <div className="flex items-center space-x-5">
-            <div className="w-15 h-12  flex items-center justify-center">
+            <div className="w-15 h-12 flex items-center justify-center">
               <span className="text-white font-bold text-xl">
                 <img
                   src="https://github.com/Titusss19/K-STREET/blob/jmbranch/ssbi-white-logo.png?raw=true"
-                  alt=""
+                  alt="K-Street Logo"
                 />
               </span>
             </div>
@@ -31,10 +36,10 @@ function Navbar({
 
           {/* Right Section - User Info and Navigation */}
           <div className="flex items-center space-x-10">
-            {/* Navigation Buttons */}
+            {/* Dashboard Button - Visible to all */}
             <button
               onClick={() => onViewChange("dashboard")}
-              className="px-1 py-1 rounded-lg font-medium transition-all duration-200 flex items-center justify-center "
+              className="px-1 py-1 rounded-lg font-medium transition-all duration-200 flex items-center justify-center"
             >
               <Home
                 className={`w-6 h-6 transition-colors duration-200 
@@ -46,47 +51,56 @@ function Navbar({
               />
             </button>
 
-            <button
-              onClick={() => onViewChange("pos")}
-              className="px-1 py-3 rounded-lg font-medium transition-all duration-200 flex items-center justify-center "
-            >
-              <ShoppingCart
-                className={`w-6 h-6 transition-colors duration-200 
-                  ${
-                    activeView === "pos"
-                      ? "text-red-600"
-                      : "text-gray-600 hover:text-red-600"
-                  }`}
-              />
-            </button>
+            {/* POS Button - Hide if user is owner/admin */}
+            {!isAdminOrOwner && (
+              <button
+                onClick={() => onViewChange("pos")}
+                className="px-1 py-3 rounded-lg font-medium transition-all duration-200 flex items-center justify-center"
+              >
+                <ShoppingCart
+                  className={`w-6 h-6 transition-colors duration-200 
+                    ${
+                      activeView === "pos"
+                        ? "text-red-600"
+                        : "text-gray-600 hover:text-red-600"
+                    }`}
+                />
+              </button>
+            )}
 
-            <button
-              onClick={() => onViewChange("sales")}
-              className="px-1 py-3 rounded-lg font-medium transition-all duration-200 flex items-center justify-center "
-            >
-              <Clipboard
-                className={`w-6 h-6 transition-colors duration-200 
-                  ${
-                    activeView === "sales"
-                      ? "text-red-600"
-                      : "text-gray-600 hover:text-red-600"
-                  }`}
-              />
-            </button>
+            {/* Sales Button - Hide for cashier, show for manager/admin/owner */}
+            {(isAdminOrOwner || isManager) && (
+              <button
+                onClick={() => onViewChange("sales")}
+                className="px-1 py-3 rounded-lg font-medium transition-all duration-200 flex items-center justify-center"
+              >
+                <Clipboard
+                  className={`w-6 h-6 transition-colors duration-200 
+                    ${
+                      activeView === "sales"
+                        ? "text-red-600"
+                        : "text-gray-600 hover:text-red-600"
+                    }`}
+                />
+              </button>
+            )}
 
-            <button
-              onClick={() => onViewChange("Items")}
-              className="px-1 py-3 rounded-lg font-medium transition-all duration-200 flex items-center justify-center "
-            >
-              <Newspaper
-                className={`w-6 h-6 transition-colors duration-200 
-                  ${
-                    activeView === "Items"
-                      ? "text-red-600"
-                      : "text-gray-600 hover:text-red-600"
-                  }`}
-              />
-            </button>
+            {/* Items Button - Hide for cashier, show for manager/admin/owner */}
+            {(isAdminOrOwner || isManager) && (
+              <button
+                onClick={() => onViewChange("Items")}
+                className="px-1 py-3 rounded-lg font-medium transition-all duration-200 flex items-center justify-center"
+              >
+                <Newspaper
+                  className={`w-6 h-6 transition-colors duration-200 
+                    ${
+                      activeView === "Items"
+                        ? "text-red-600"
+                        : "text-gray-600 hover:text-red-600"
+                    }`}
+                />
+              </button>
+            )}
 
             {/* Logout Button */}
             <button

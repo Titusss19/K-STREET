@@ -22,52 +22,47 @@ export default function Login() {
     setMessage("");
   };
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setLoading(true);
-    setMessage("");
+const handleSubmit = async (e) => {
+  e.preventDefault();
+  setLoading(true);
+  setMessage("");
 
-    try {
-      const response = await axios.post("http://localhost:3002/login", {
-        email: formData.email,
-        password: formData.password,
-      });
+  try {
+    const response = await axios.post("http://localhost:3002/login", {
+      email: formData.email,
+      password: formData.password,
+    });
 
-      if (response.data.success) {
-        setMessage("Login successful!");
+    console.log("Login Response:", response.data); // ADD THIS LINE
 
-        // Save user data to localStorage
-        localStorage.setItem("user", JSON.stringify(response.data.user));
-        localStorage.setItem("isLoggedIn", "true");
+    if (response.data.success) {
+      setMessage("Login successful!");
 
-        // If remember me is checked, save email
-        if (formData.remember) {
-          localStorage.setItem("rememberedEmail", formData.email);
-        } else {
-          localStorage.removeItem("rememberedEmail");
-        }
+      // Save user data to localStorage
+      const userData = response.data.user;
+      console.log("User data to save:", userData); // ADD THIS LINE
+      console.log("User branch:", userData.branch); // ADD THIS LINE
 
-        // Redirect to dashboard after 1 second
-        setTimeout(() => {
-          window.location.href = "/Dashboard";
-        }, 2000);
-      }
-    } catch (error) {
-      console.error("Login error:", error);
+      localStorage.setItem("user", JSON.stringify(userData));
+      localStorage.setItem("isLoggedIn", "true");
 
-      if (error.response && error.response.data) {
-        setMessage(error.response.data.message);
-      } else if (error.code === "ECONNREFUSED") {
-        setMessage(
-          "Backend server is not running. Please start the server first."
-        );
+      // If remember me is checked, save email
+      if (formData.remember) {
+        localStorage.setItem("rememberedEmail", formData.email);
       } else {
-        setMessage("Network error. Please try again.");
+        localStorage.removeItem("rememberedEmail");
       }
-    } finally {
-      setLoading(false);
+
+      // Redirect to dashboard
+      navigate("/dashboard");
     }
-  };
+  } catch (error) {
+    console.error("Login error:", error);
+    // ... rest of error handling
+  } finally {
+    setLoading(false);
+  }
+};
 
   // Check for remembered email on component mount
   React.useEffect(() => {

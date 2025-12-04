@@ -2,6 +2,12 @@ import React, { useState, useEffect } from "react";
 import axios from "axios";
 
 const Items = () => {
+  // GET USER FROM LOCALSTORAGE
+  const [user, setUser] = useState(() => {
+    const userData = localStorage.getItem("user");
+    return userData ? JSON.parse(userData) : null;
+  });
+
   const [items, setItems] = useState([]);
   const [filteredItems, setFilteredItems] = useState([]);
   const [showFormModal, setShowFormModal] = useState(false);
@@ -38,15 +44,15 @@ const Items = () => {
     current_stock: 0,
     min_stock: 0,
     supplier: "",
-    price: "", // Price per item field
-    total_price: "", // Total price field (price × quantity)
+    price: "",
+    total_price: "",
     quantity: 1,
   });
   const [inventorySearch, setInventorySearch] = useState("");
   const [showStockModal, setShowStockModal] = useState(false);
   const [selectedInventory, setSelectedInventory] = useState(null);
 
-  // Updated stock transaction state
+  // Stock transaction state
   const [stockTransaction, setStockTransaction] = useState({
     type: "IN",
     stockPerItem: 0,
@@ -60,10 +66,42 @@ const Items = () => {
     useState(false);
   const [inventoryToDelete, setInventoryToDelete] = useState(null);
 
-  // API endpoints
+  // ADMIN/OWNER STATES
+  const [allBranches, setAllBranches] = useState([]);
+  const [selectedBranch, setSelectedBranch] = useState("all");
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  // API endpoints - UPDATED TO INCLUDE BRANCH
   const API_ALL_ITEMS = "http://localhost:3002/all-items";
   const API_ITEMS = "http://localhost:3002/items";
   const API_INVENTORY = "http://localhost:3002/inventory";
+  const API_ADMIN_ALL_ITEMS = "http://localhost:3002/admin/all-items";
+  const API_ADMIN_ALL_INVENTORY = "http://localhost:3002/admin/all-inventory";
+  const API_USERS = "http://localhost:3002/users";
+
+  // Function to get axios headers with user info
+  const getAxiosHeaders = () => {
+    const storedUser = localStorage.getItem("user");
+    let headers = {};
+
+    if (storedUser) {
+      try {
+        const parsedUser = JSON.parse(storedUser);
+        const user = parsedUser.user || parsedUser;
+
+        headers["x-user"] = JSON.stringify({
+          id: user.id,
+          email: user.email,
+          role: user.role || "cashier",
+          branch: user.branch || "main",
+        });
+      } catch (error) {
+        console.error("Error parsing user:", error);
+      }
+    }
+
+    return headers;
+  };
 
   // Function to convert liters to ml for display
   const convertToDisplayUnit = (item) => {
@@ -90,101 +128,242 @@ const Items = () => {
     return item;
   };
 
-  // Fetch ALL items from backend with better error handling
-  const fetchAllItems = async () => {
+  // Function to fetch all branches from users
+  const fetchAllBranches = async () => {
     try {
-      const res = await axios.get(API_ALL_ITEMS);
+      const headers = getAxiosHeaders();
+      const res = await axios.get(API_USERS, { headers: headers });
 
-      // Ensure the response data is an array
       if (Array.isArray(res.data)) {
-        setItems(res.data);
-        setFilteredItems(res.data);
-      } else if (res.data && Array.isArray(res.data.items)) {
-        // Handle case where data is nested in an items property
-        setItems(res.data.items);
-        setFilteredItems(res.data.items);
-      } else if (res.data && Array.isArray(res.data.data)) {
-        // Handle case where data is nested in a data property
-        setItems(res.data.data);
-        setFilteredItems(res.data.data);
-      } else {
-        console.warn("Unexpected API response format:", res.data);
-        setItems([]);
-        setFilteredItems([]);
+        // Extract unique branches from users
+        const branches = [
+          ...new Set(
+            res.data.map((user) => user.branch).filter((branch) => branch)
+          ),
+        ];
+        setAllBranches(branches);
+        console.log("Available branches:", branches);
+        return branches;
       }
+      return [];
     } catch (err) {
-      console.error("Error fetching all items: ", err);
-      try {
-        const fallbackRes = await axios.get(API_ITEMS);
-
-        // Ensure fallback response is also an array
-        if (Array.isArray(fallbackRes.data)) {
-          setItems(fallbackRes.data);
-          setFilteredItems(fallbackRes.data);
-        } else if (fallbackRes.data && Array.isArray(fallbackRes.data.items)) {
-          setItems(fallbackRes.data.items);
-          setFilteredItems(fallbackRes.data.items);
-        } else if (fallbackRes.data && Array.isArray(fallbackRes.data.data)) {
-          setItems(fallbackRes.data.data);
-          setFilteredItems(fallbackRes.data.data);
-        } else {
-          console.warn(
-            "Unexpected fallback API response format:",
-            fallbackRes.data
-          );
-          setItems([]);
-          setFilteredItems([]);
-        }
-      } catch (fallbackErr) {
-        console.error("Error with fallback fetch: ", fallbackErr);
-        setItems([]);
-        setFilteredItems([]);
-      }
+      console.error("Error fetching branches:", err);
+      return [];
     }
   };
 
-  // Fetch inventory items from MySQL with better error handling
+  // Fetch ALL items from backend with BRANCH FILTER
+  const fetchAllItems = async () => {
+    try {
+      // Check if user is admin/owner
+      if (isAdmin && selectedBranch) {
+        console.log("Admin fetching items for branch:", selectedBranch);
+        // Use admin endpoint to fetch items for selected branch
+        const headers = getAxiosHeaders();
+        const res = await axios.get(API_ADMIN_ALL_ITEMS, { headers: headers });
+
+        // Filter by selected branch
+        let allItems = [];
+        if (Array.isArray(res.data)) {
+          allItems = res.data;
+        } else if (res.data && Array.isArray(res.data.items)) {
+          allItems = res.data.items;
+        } else if (res.data && Array.isArray(res.data.data)) {
+          allItems = res.data.data;
+        }
+
+        // Filter by selected branch if not "all"
+        const filteredItems =
+          selectedBranch === "all"
+            ? allItems
+            : allItems.filter((item) => item.branch === selectedBranch);
+
+        setItems(filteredItems);
+        setFilteredItems(filteredItems);
+        console.log(
+          `Found ${filteredItems.length} items for branch ${selectedBranch}`
+        );
+      } else {
+        // Non-admin users or admin without branch selection
+        const userBranch = user?.branch;
+        if (!userBranch) {
+          console.log("No user branch found");
+          setItems([]);
+          setFilteredItems([]);
+          return;
+        }
+
+        console.log("Fetching items for branch:", userBranch);
+
+        // Get headers with user info
+        const headers = getAxiosHeaders();
+
+        // Fetch items filtered by branch WITH HEADERS
+        const res = await axios.get(`${API_ITEMS}?branch=${userBranch}`, {
+          headers: headers,
+        });
+
+        // Ensure the response data is an array
+        let itemsData = [];
+        if (Array.isArray(res.data)) {
+          itemsData = res.data;
+        } else if (res.data && Array.isArray(res.data.items)) {
+          itemsData = res.data.items;
+        } else if (res.data && Array.isArray(res.data.data)) {
+          itemsData = res.data.data;
+        }
+
+        setItems(itemsData);
+        setFilteredItems(itemsData);
+        console.log(`Found ${itemsData.length} items for branch ${userBranch}`);
+      }
+    } catch (err) {
+      console.error("Error fetching all items: ", err);
+      setItems([]);
+      setFilteredItems([]);
+    }
+  };
+
+  // Fetch inventory items from MySQL with BRANCH FILTER
   const fetchInventoryItems = async () => {
     try {
-      const res = await axios.get(API_INVENTORY);
+      // Check if user is admin/owner
+      if (isAdmin && selectedBranch) {
+        console.log("Admin fetching inventory for branch:", selectedBranch);
+        // Use admin endpoint to fetch inventory for selected branch
+        const headers = getAxiosHeaders();
+        const res = await axios.get(API_ADMIN_ALL_INVENTORY, {
+          headers: headers,
+        });
 
-      let inventoryData = [];
+        // Filter by selected branch
+        let allInventory = [];
+        if (Array.isArray(res.data)) {
+          allInventory = res.data;
+        } else if (res.data && Array.isArray(res.data.items)) {
+          allInventory = res.data.items;
+        } else if (res.data && Array.isArray(res.data.data)) {
+          allInventory = res.data.data;
+        }
 
-      // Handle different possible response formats
-      if (Array.isArray(res.data)) {
-        inventoryData = res.data;
-      } else if (res.data && Array.isArray(res.data.items)) {
-        inventoryData = res.data.items;
-      } else if (res.data && Array.isArray(res.data.data)) {
-        inventoryData = res.data.data;
-      } else if (res.data && typeof res.data === "object") {
-        // If it's a single object, wrap it in an array
-        inventoryData = [res.data];
+        // Filter by selected branch if not "all"
+        const filteredInventory =
+          selectedBranch === "all"
+            ? allInventory
+            : allInventory.filter((item) => item.branch === selectedBranch);
+
+        // Convert liters to ml for display
+        const convertedItems = filteredInventory.map((item) =>
+          convertToDisplayUnit(item)
+        );
+        setInventoryItems(convertedItems);
+        setFilteredInventory(convertedItems);
+        console.log(
+          `Found ${convertedItems.length} inventory items for branch ${selectedBranch}`
+        );
       } else {
-        console.warn("Unexpected inventory API response format:", res.data);
-        inventoryData = [];
-      }
+        // Non-admin users or admin without branch selection
+        const userBranch = user?.branch;
+        if (!userBranch) {
+          console.log("No user branch found for inventory");
+          setInventoryItems([]);
+          setFilteredInventory([]);
+          return;
+        }
 
-      // Convert liters to ml for display
-      const convertedItems = inventoryData.map((item) =>
-        convertToDisplayUnit(item)
-      );
-      setInventoryItems(convertedItems);
-      setFilteredInventory(convertedItems);
+        console.log("Fetching inventory for branch:", userBranch);
+
+        // Get headers with user info
+        const headers = getAxiosHeaders();
+
+        // Fetch inventory filtered by branch WITH HEADERS
+        const res = await axios.get(`${API_INVENTORY}?branch=${userBranch}`, {
+          headers: headers,
+        });
+
+        let inventoryData = [];
+
+        // Handle different possible response formats
+        if (Array.isArray(res.data)) {
+          inventoryData = res.data;
+        } else if (res.data && Array.isArray(res.data.items)) {
+          inventoryData = res.data.items;
+        } else if (res.data && Array.isArray(res.data.data)) {
+          inventoryData = res.data.data;
+        } else if (res.data && typeof res.data === "object") {
+          inventoryData = [res.data];
+        }
+
+        // Convert liters to ml for display
+        const convertedItems = inventoryData.map((item) =>
+          convertToDisplayUnit(item)
+        );
+        setInventoryItems(convertedItems);
+        setFilteredInventory(convertedItems);
+        console.log(
+          `Found ${convertedItems.length} inventory items for branch ${userBranch}`
+        );
+      }
     } catch (err) {
       console.error("Error fetching inventory: ", err);
-      // Fallback to empty array if API fails
       setInventoryItems([]);
       setFilteredInventory([]);
     }
   };
 
+  // Fetch data when component mounts AND when user changes
   useEffect(() => {
-    fetchAllItems();
-    fetchInventoryItems();
-  }, []);
+    if (user) {
+      // Check if user is admin/owner
+      const userIsAdmin = user.role === "admin" || user.role === "owner";
+      setIsAdmin(userIsAdmin);
 
-  // Search functionality for products with array safety
+      if (userIsAdmin) {
+        // For admin, fetch all branches first
+        fetchAllBranches().then(() => {
+          // After fetching branches, set default to "all" and fetch data
+          setSelectedBranch("all");
+          // DIRECTLY FETCH DATA HERE INSTEAD OF WAITING FOR ANOTHER useEffect
+          fetchAllItems();
+          fetchInventoryItems();
+        });
+      } else {
+        // For non-admin, just fetch data for their branch
+        if (user.branch) {
+          console.log("User branch detected:", user.branch);
+          fetchAllItems();
+          fetchInventoryItems();
+        }
+      }
+    } else {
+      console.log("Waiting for user data...");
+    }
+  }, [user]);
+
+  // Fetch data when selected branch changes (for admin)
+  useEffect(() => {
+    if (isAdmin && selectedBranch) {
+      // Check which report is active and fetch accordingly
+      if (activeReport === "PRODUCTLIST") {
+        fetchAllItems();
+      } else if (activeReport === "ITEMINVENTORY") {
+        fetchInventoryItems();
+      }
+    }
+  }, [selectedBranch, isAdmin]);
+
+  // AUTOMATICALLY FETCH DATA WHEN SWITCHING REPORTS
+  useEffect(() => {
+    if (activeReport === "PRODUCTLIST") {
+      console.log("Switched to PRODUCTLIST, fetching products...");
+      fetchAllItems();
+    } else if (activeReport === "ITEMINVENTORY") {
+      console.log("Switched to ITEMINVENTORY, fetching inventory...");
+      fetchInventoryItems();
+    }
+  }, [activeReport]);
+
+  // Search functionality for products
   useEffect(() => {
     if (!Array.isArray(items)) {
       setFilteredItems([]);
@@ -204,7 +383,7 @@ const Items = () => {
     setCurrentPage(1);
   }, [searchTerm, items]);
 
-  // Search functionality for inventory with array safety
+  // Search functionality for inventory
   useEffect(() => {
     if (!Array.isArray(inventoryItems)) {
       setFilteredInventory([]);
@@ -222,7 +401,7 @@ const Items = () => {
     setFilteredInventory(filtered);
   }, [inventorySearch, inventoryItems]);
 
-  // Save handler (Add or Edit) - UPDATED
+  // Save handler (Add or Edit) - UPDATED WITH BRANCH
   const handleSave = async () => {
     // Basic validation
     if (!newItem.product_code || !newItem.name || !newItem.image) {
@@ -236,35 +415,59 @@ const Items = () => {
       return;
     }
 
+    // Check if user has branch (for non-admin)
+    if (!user?.branch && !isAdmin) {
+      alert("Cannot determine your branch. Please login again.");
+      return;
+    }
+
     try {
-      // Prepare data for API
+      // Determine which branch to use
+      const targetBranch = isAdmin
+        ? selectedBranch === "all"
+          ? user.branch
+          : selectedBranch
+        : user.branch;
+
+      if (!targetBranch) {
+        alert("Please select a branch!");
+        return;
+      }
+
+      // Prepare data for API - INCLUDE USER'S BRANCH
       const saveData = {
         product_code: newItem.product_code,
         name: newItem.name,
         category: newItem.category,
         description_type: newItem.description_type,
         image: newItem.image,
-        // For flavor items, send "0" as price
         price:
           newItem.description_type === "k-street Flavor" ? "0" : newItem.price,
+        branch: targetBranch, // AUTO-ADD USER'S BRANCH
       };
 
-      console.log("Sending data:", saveData);
+      console.log("Saving item with branch:", targetBranch);
+      console.log("Data:", saveData);
+
+      // Get headers with user info
+      const headers = getAxiosHeaders();
 
       let response;
       if (editingItem) {
-        response = await axios.put(`${API_ITEMS}/${editingItem.id}`, saveData);
+        response = await axios.put(`${API_ITEMS}/${editingItem.id}`, saveData, {
+          headers: headers,
+        });
         setSuccessMessage("Product updated successfully!");
       } else {
-        response = await axios.post(API_ITEMS, saveData);
+        response = await axios.post(API_ITEMS, saveData, {
+          headers: headers,
+        });
         setSuccessMessage("Product added successfully!");
       }
 
       if (response.data.success) {
         setShowSuccessModal(true);
-
-        // Refresh data
-        fetchAllItems();
+        fetchAllItems(); // Refresh data
         setShowFormModal(false);
         setEditingItem(null);
         setNewItem({
@@ -278,15 +481,11 @@ const Items = () => {
       }
     } catch (err) {
       console.error("Error saving item: ", err);
-      if (err.response && err.response.data && err.response.data.message) {
-        alert(`Error: ${err.response.data.message}`);
-      } else {
-        alert("Error saving item. Please try again.");
-      }
+      alert("Error saving item. Please try again.");
     }
   };
 
-  // CORRECTED: Save inventory item to MySQL - FIXED FOR BACKEND COMPATIBILITY
+  // Save inventory item - UPDATED WITH BRANCH
   const handleSaveInventory = async () => {
     if (
       !newInventoryItem.product_code ||
@@ -297,18 +496,36 @@ const Items = () => {
       return;
     }
 
+    // Check if user has branch (for non-admin)
+    if (!user?.branch && !isAdmin) {
+      alert("Cannot determine your branch. Please login again.");
+      return;
+    }
+
     try {
-      // CORRECTED: Calculate total current stock (stock per item × number of items)
+      // Determine which branch to use
+      const targetBranch = isAdmin
+        ? selectedBranch === "all"
+          ? user.branch
+          : selectedBranch
+        : user.branch;
+
+      if (!targetBranch) {
+        alert("Please select a branch!");
+        return;
+      }
+
+      // Calculate total current stock
       const stockPerItem = parseFloat(newInventoryItem.current_stock || 0);
       const numberOfItems = parseFloat(newInventoryItem.quantity || 1);
       const totalCurrentStock = stockPerItem * numberOfItems;
 
-      // Calculate total price (price per item × number of items)
+      // Calculate total price
       const pricePerItem = parseFloat(newInventoryItem.price || 0);
       const totalPrice = pricePerItem * numberOfItems;
 
-      // For new items, set current stock to the calculated total
-      // For editing items, add the calculated total to existing stock
+      // For new items, set current stock to calculated total
+      // For editing items, add calculated total to existing stock
       const finalCurrentStock = editingInventory
         ? (editingInventory.unit === "liters"
             ? editingInventory.current_stock / 1000
@@ -320,15 +537,15 @@ const Items = () => {
         ...newInventoryItem,
         current_stock: finalCurrentStock,
         min_stock: parseFloat(newInventoryItem.min_stock) || 0,
-        price: pricePerItem, // Price per item
-        total_price: totalPrice, // Total price
+        price: pricePerItem,
+        total_price: totalPrice,
       });
 
-      // Prepare data for backend (match backend expected fields)
+      // Prepare data for backend - INCLUDE USER'S BRANCH
       const inventoryData = {
         product_code: itemToSave.product_code,
         name: itemToSave.name,
-        category: itemToSave.category,
+        category: itemToSave.category || "Raw Material",
         description: itemToSave.description || "",
         unit: itemToSave.unit,
         current_stock: itemToSave.current_stock,
@@ -336,23 +553,28 @@ const Items = () => {
         supplier: itemToSave.supplier || "",
         price: itemToSave.price,
         total_price: itemToSave.total_price,
+        branch: targetBranch, // AUTO-ADD USER'S BRANCH
       };
 
+      console.log("Saving inventory with branch:", targetBranch);
+      console.log("Data:", inventoryData);
+
+      // Get headers with user info
+      const headers = getAxiosHeaders();
+
       if (editingInventory) {
-        // Update existing inventory in MySQL
         await axios.put(
           `${API_INVENTORY}/${editingInventory.id}`,
-          inventoryData
+          inventoryData,
+          { headers: headers }
         );
         setSuccessMessage("Inventory item updated successfully!");
       } else {
-        // Add new inventory to MySQL
-        await axios.post(API_INVENTORY, inventoryData);
+        await axios.post(API_INVENTORY, inventoryData, { headers: headers });
         setSuccessMessage("Inventory item added successfully!");
       }
 
-      // Refresh inventory data from MySQL
-      fetchInventoryItems();
+      fetchInventoryItems(); // Refresh inventory data
       setShowInventoryModal(false);
       setEditingInventory(null);
       setNewInventoryItem({
@@ -371,11 +593,7 @@ const Items = () => {
       setShowSuccessModal(true);
     } catch (err) {
       console.error("Error saving inventory item: ", err);
-      if (err.response && err.response.data && err.response.data.message) {
-        alert(err.response.data.message);
-      } else {
-        alert("Error saving inventory item. Please try again.");
-      }
+      alert("Error saving inventory item. Please try again.");
     }
   };
 
@@ -392,7 +610,7 @@ const Items = () => {
     return pricePerItem * quantity;
   };
 
-  // Handle stock transaction - SIMPLIFIED VERSION
+  // Handle stock transaction
   const handleStockTransaction = async () => {
     if (!stockTransaction.stockPerItem || stockTransaction.stockPerItem <= 0) {
       alert("Please enter a valid stock per item!");
@@ -405,22 +623,19 @@ const Items = () => {
     }
 
     try {
-      // Use the selectedInventory data we already have
       const rawInventoryItem = selectedInventory;
 
-      // Calculate total stock to add (in the unit that matches database)
+      // Calculate total stock to add
       const stockPerItem = parseFloat(stockTransaction.stockPerItem);
       const quantity = parseFloat(stockTransaction.quantity);
       let totalStockToAdd = stockPerItem * quantity;
 
-      // IMPORTANT: If the display shows ml but database stores liters
-      // We need to check if we need to convert
+      // Check if we need to convert ml to liters
       const needsConversion =
         rawInventoryItem.display_unit === "ml" &&
         rawInventoryItem.unit === "liters";
 
       if (needsConversion) {
-        // Convert ml to liters for database
         totalStockToAdd = totalStockToAdd / 1000;
       }
 
@@ -428,14 +643,10 @@ const Items = () => {
       const pricePerItem = parseFloat(stockTransaction.pricePerItem || 0);
       const totalPriceToAdd = pricePerItem * quantity;
 
-      // Get current stock (already in database units from the original fetch)
-      // If it's liters and we displayed as ml, convert back
+      // Get current stock
       let currentStock = parseFloat(rawInventoryItem.current_stock || 0);
 
       if (needsConversion) {
-        // The current_stock from inventoryItems is already converted for display
-        // We need to get the original database value
-        // Since we can't fetch it, we'll use a workaround
         currentStock = currentStock / 1000;
       }
 
@@ -445,7 +656,6 @@ const Items = () => {
           ? currentStock + totalStockToAdd
           : currentStock - totalStockToAdd;
 
-      // Ensure stock doesn't go below 0 for OUT transactions
       if (stockTransaction.type === "OUT" && newStock < 0) {
         alert("Cannot deduct more stock than available!");
         return;
@@ -463,12 +673,6 @@ const Items = () => {
           ? existingTotalPrice + totalPriceToAdd
           : Math.max(0, existingTotalPrice - totalPriceToAdd);
 
-      // Convert newStock back to display units if needed
-      let displayNewStock = newStock;
-      if (needsConversion) {
-        displayNewStock = newStock * 1000;
-      }
-
       // Prepare data for backend
       const updatedItem = {
         product_code: rawInventoryItem.product_code,
@@ -476,36 +680,30 @@ const Items = () => {
         category: rawInventoryItem.category,
         description: rawInventoryItem.description || "",
         unit: rawInventoryItem.unit,
-        current_stock: newStock, // Store in database units (liters)
+        current_stock: newStock,
         min_stock: rawInventoryItem.min_stock,
         supplier: rawInventoryItem.supplier || "",
         price: newPrice,
         total_price: newTotalPrice,
+        branch: rawInventoryItem.branch, // KEEP ORIGINAL BRANCH
       };
 
-      console.log("Sending to backend:", updatedItem);
-      console.log("Original unit:", rawInventoryItem.unit);
-      console.log("Display unit:", rawInventoryItem.display_unit);
-      console.log("Total stock to add (db units):", totalStockToAdd);
-      console.log("Current stock (db):", currentStock);
-      console.log("New stock (db):", newStock);
-      console.log("New stock (display):", displayNewStock);
+      // Get headers with user info
+      const headers = getAxiosHeaders();
 
       const updateResponse = await axios.put(
         `${API_INVENTORY}/${selectedInventory.id}`,
-        updatedItem
+        updatedItem,
+        { headers: headers }
       );
 
       if (updateResponse.data.success) {
         setSuccessMessage(
           `Stock ${
             stockTransaction.type === "IN" ? "added" : "deducted"
-          } successfully! ${
-            stockTransaction.pricePerItem ? "Price updated." : ""
-          }`
+          } successfully!`
         );
 
-        // Refresh inventory data
         fetchInventoryItems();
         setShowStockModal(false);
         setSelectedInventory(null);
@@ -517,20 +715,13 @@ const Items = () => {
           notes: "",
         });
         setShowSuccessModal(true);
-      } else {
-        throw new Error(
-          updateResponse.data.message || "Failed to update stock"
-        );
       }
     } catch (err) {
       console.error("Error processing stock transaction: ", err);
-      if (err.response && err.response.data && err.response.data.message) {
-        alert(`Error: ${err.response.data.message}`);
-      } else {
-        alert("Error processing stock transaction. Please try again.");
-      }
+      alert("Error processing stock transaction. Please try again.");
     }
   };
+
   // Delete functions for products
   const handleDeleteClick = (item) => {
     setItemToDelete(item);
@@ -540,7 +731,12 @@ const Items = () => {
   const confirmDelete = async () => {
     if (itemToDelete) {
       try {
-        await axios.delete(`${API_ITEMS}/${itemToDelete.id}`);
+        // Get headers with user info
+        const headers = getAxiosHeaders();
+
+        await axios.delete(`${API_ITEMS}/${itemToDelete.id}`, {
+          headers: headers,
+        });
         fetchAllItems();
         setShowDeleteModal(false);
         setItemToDelete(null);
@@ -567,7 +763,12 @@ const Items = () => {
   const confirmDeleteInventory = async () => {
     if (inventoryToDelete) {
       try {
-        await axios.delete(`${API_INVENTORY}/${inventoryToDelete.id}`);
+        // Get headers with user info
+        const headers = getAxiosHeaders();
+
+        await axios.delete(`${API_INVENTORY}/${inventoryToDelete.id}`, {
+          headers: headers,
+        });
         fetchInventoryItems();
         setShowDeleteInventoryModal(false);
         setInventoryToDelete(null);
@@ -585,7 +786,7 @@ const Items = () => {
     setInventoryToDelete(null);
   };
 
-  // Edit
+  // Edit product
   const handleEdit = (item) => {
     setEditingItem(item);
     setNewItem({
@@ -618,12 +819,12 @@ const Items = () => {
       category: displayItem.category,
       description: displayItem.description,
       unit: displayItem.unit,
-      current_stock: 0, // Reset to 0 when editing - user will input how much to add
+      current_stock: 0, // Reset to 0 when editing
       min_stock: displayItem.min_stock,
       supplier: displayItem.supplier,
       price: displayItem.price || "",
       total_price: displayItem.total_price || "",
-      quantity: 1, // Default quantity when editing
+      quantity: 1,
     });
     setShowInventoryModal(true);
   };
@@ -658,6 +859,36 @@ const Items = () => {
     });
   };
 
+  // Handle branch change (for admin)
+  const handleBranchChange = (branch) => {
+    setSelectedBranch(branch);
+    setCurrentPage(1); // Reset to first page when changing branch
+
+    // Automatically fetch data when branch changes
+    if (isAdmin) {
+      if (activeReport === "PRODUCTLIST") {
+        fetchAllItems();
+      } else if (activeReport === "ITEMINVENTORY") {
+        fetchInventoryItems();
+      }
+    }
+  };
+
+  // Handle report navigation
+  const handleReportNavigation = (reportType) => {
+    setActiveReport(reportType);
+    setCurrentPage(1);
+
+    // Automatically fetch data when switching reports
+    if (reportType === "PRODUCTLIST") {
+      console.log("Switching to PRODUCTLIST, fetching products...");
+      fetchAllItems();
+    } else if (reportType === "ITEMINVENTORY") {
+      console.log("Switching to ITEMINVENTORY, fetching inventory...");
+      fetchInventoryItems();
+    }
+  };
+
   // Get current stock label based on selected unit
   const getCurrentStockLabel = () => {
     switch (newInventoryItem.unit) {
@@ -678,27 +909,12 @@ const Items = () => {
     }
   };
 
-  // Get quantity label based on selected unit
+  // Get quantity label
   const getQuantityLabel = () => {
-    switch (newInventoryItem.unit) {
-      case "grams":
-        return "Number of Items";
-      case "kg":
-        return "Number of Items";
-      case "liters":
-        return "Number of Items";
-      case "pcs":
-        return "Number of Items";
-      case "packs":
-        return "Number of Items";
-      case "bottles":
-        return "Number of Items";
-      default:
-        return "Number of Items";
-    }
+    return "Number of Items";
   };
 
-  // Get min stock label based on selected unit
+  // Get min stock label
   const getMinStockLabel = () => {
     switch (newInventoryItem.unit) {
       case "grams":
@@ -718,14 +934,14 @@ const Items = () => {
     }
   };
 
-  // CORRECTED: Calculate total quantity to add
+  // Calculate total quantity to add
   const calculateTotalQuantity = () => {
     const stockPerItem = parseFloat(newInventoryItem.current_stock || 0);
     const numberOfItems = parseFloat(newInventoryItem.quantity || 1);
     return stockPerItem * numberOfItems;
   };
 
-  // CORRECTED: Calculate total price
+  // Calculate total price
   const calculateTotalPrice = () => {
     const pricePerItem = parseFloat(newInventoryItem.price || 0);
     const numberOfItems = parseFloat(newInventoryItem.quantity || 1);
@@ -735,14 +951,13 @@ const Items = () => {
   // Refresh inventory when stock modal closes
   useEffect(() => {
     if (!showStockModal && !showSuccessModal) {
-      // Small delay to ensure backend has processed the request
       setTimeout(() => {
         fetchInventoryItems();
       }, 500);
     }
   }, [showStockModal, showSuccessModal]);
 
-  // Pagination logic with array safety
+  // Pagination logic
   const indexOfLastItem = currentPage * itemsPerPage;
   const indexOfFirstItem = indexOfLastItem - itemsPerPage;
   const currentItems = Array.isArray(filteredItems)
@@ -764,21 +979,31 @@ const Items = () => {
     }
   };
 
-  // Handle report navigation
-  const handleReportNavigation = (reportType) => {
-    setActiveReport(reportType);
-    setCurrentPage(1);
-  };
-
-  // Calculate low stock items with array safety
+  // Calculate low stock items
   const lowStockItems = Array.isArray(inventoryItems)
     ? inventoryItems.filter((item) => item.current_stock <= item.min_stock)
     : [];
 
+  // Loading state
+  if (!user) {
+    return (
+      <div className="p-6 min-h-screen">
+        <div className="max-w-7xl mx-auto bg-white p-6 rounded-lg shadow">
+          <div className="text-center py-12">
+            <p className="text-gray-500 font-medium">Loading user data...</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="p-6 min-h-screen">
       <div className="max-w-7xl mx-auto bg-white p-6 rounded-lg shadow">
-        <h1 className="text-2xl font-bold mb-4">PRODUCTS</h1>
+        {/* HEADER WITH BRANCH INFO */}
+        <div className="flex justify-between items-center mb-4">
+          <h1 className="text-2xl font-bold">PRODUCTS</h1>
+        </div>
 
         {/* Report Navigation Headers */}
         <div className="mb-6 bg-gradient-to-r from-red-50 to-red-100 p-4 rounded-lg border border-red-200">
@@ -839,38 +1064,35 @@ const Items = () => {
         {/* PRODUCT LIST VIEW */}
         {activeReport === "PRODUCTLIST" && (
           <>
-            {/* Search Bar */}
+            {/* Search Bar with Branch Filter */}
             <div className="mb-4 flex justify-between items-center">
-              <div className="relative max-w-md">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <svg
-                    className="h-5 w-5 text-gray-400"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
-                    />
-                  </svg>
-                </div>
-                <input
-                  type="text"
-                  placeholder="Search by product code, name, category, or description..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="w-full pl-10 pr-12 py-3 border-2 border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent transition-all"
-                />
-                {searchTerm && (
-                  <button
-                    onClick={handleClearSearch}
-                    className="absolute inset-y-0 right-0 pr-3 flex items-center"
-                  >
+              <div className="flex items-center gap-4">
+                {/* Branch Filter Dropdown (for Admin) */}
+                {isAdmin && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium text-gray-700 whitespace-nowrap">
+                      Branch:
+                    </span>
+                    <select
+                      value={selectedBranch}
+                      onChange={(e) => handleBranchChange(e.target.value)}
+                      className="border border-gray-300 rounded-lg px-4 py-2.5 text-sm focus:ring-2 focus:ring-red-500 focus:border-transparent transition-all bg-white min-w-[180px]"
+                    >
+                      <option value="all">All Branches</option>
+                      {allBranches.map((branch) => (
+                        <option key={branch} value={branch}>
+                          {branch} {branch === user.branch ? "(Current)" : ""}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                {/* Search Bar for Products */}
+                <div className="relative max-w-md">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                     <svg
-                      className="h-5 w-5 text-gray-400 hover:text-gray-600"
+                      className="h-5 w-5 text-gray-400"
                       fill="none"
                       stroke="currentColor"
                       viewBox="0 0 24 24"
@@ -879,32 +1101,60 @@ const Items = () => {
                         strokeLinecap="round"
                         strokeLinejoin="round"
                         strokeWidth={2}
-                        d="M6 18L18 6M6 6l12 12"
+                        d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
                       />
                     </svg>
-                  </button>
-                )}
+                  </div>
+                  <input
+                    type="text"
+                    placeholder="Search products..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="w-full pl-10 pr-12 py-3 border-2 border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent transition-all"
+                  />
+                  {searchTerm && (
+                    <button
+                      onClick={handleClearSearch}
+                      className="absolute inset-y-0 right-0 pr-3 flex items-center"
+                    >
+                      <svg
+                        className="h-5 w-5 text-gray-400 hover:text-gray-600"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M6 18L18 6M6 6l12 12"
+                        />
+                      </svg>
+                    </button>
+                  )}
+                </div>
               </div>
 
-              {searchTerm && (
-                <div className="mt-2 text-sm text-gray-600">
-                  Found{" "}
-                  {Array.isArray(filteredItems) ? filteredItems.length : 0}{" "}
-                  product
-                  {Array.isArray(filteredItems) && filteredItems.length !== 1
-                    ? "s"
-                    : ""}{" "}
-                  matching "{searchTerm}"
-                  {Array.isArray(filteredItems) &&
-                    filteredItems.length === 0 && (
-                      <span className="ml-2 text-red-500">
-                        No products found
-                      </span>
-                    )}
+              {/* BRANCH INFO IN SEARCH RESULTS (for non-admin) */}
+              {!isAdmin && user.branch && searchTerm && (
+                <div className="text-sm text-red-600">
+                  Searching in branch: <strong>{user.branch}</strong>
                 </div>
               )}
+
+              {/* Add Product Button */}
               <button
                 onClick={() => {
+                  if (!user?.branch && !isAdmin) {
+                    alert("Cannot determine your branch. Please login again.");
+                    return;
+                  }
+
+                  if (isAdmin && !selectedBranch) {
+                    alert("Please select a branch first!");
+                    return;
+                  }
+
                   setEditingItem(null);
                   setNewItem({
                     product_code: "",
@@ -916,7 +1166,7 @@ const Items = () => {
                   });
                   setShowFormModal(true);
                 }}
-                className="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700"
+                className="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 whitespace-nowrap"
               >
                 + Add Product
               </button>
@@ -943,6 +1193,9 @@ const Items = () => {
                       <th className="px-6 py-4 text-left text-sm font-semibold tracking-wide">
                         Description Type
                       </th>
+                      <th className="px-6 py-4 text-left text-sm font-semibold tracking-wide">
+                        Branch
+                      </th>
                       <th className="px-6 py-4 text-right text-sm font-semibold tracking-wide">
                         Price
                       </th>
@@ -952,87 +1205,103 @@ const Items = () => {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
-                    {Array.isArray(currentItems) &&
-                      currentItems.map((item) => (
-                        <tr
-                          key={item.id}
-                          className="hover:bg-gradient-to-r hover:from-red-50 hover:to-red-50 transition-colors duration-150"
-                        >
-                          <td className="px-6 py-4 text-sm font-medium text-gray-900">
-                            #{item.id}
-                          </td>
-                          <td className="px-6 py-4 text-sm font-semibold text-blue-700">
-                            {item.product_code}
-                          </td>
-                          <td className="px-6 py-4 text-sm font-semibold text-gray-700">
-                            {item.name}
-                          </td>
-                          <td className="px-6 py-4 text-sm text-gray-600">
-                            <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-red-100 text-black-800">
-                              {item.category}
-                            </span>
-                          </td>
-                          <td className="px-6 py-4 text-sm text-gray-600">
-                            <span
-                              className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium ${
-                                item.description_type === "k-street food"
-                                  ? "bg-green-100 text-green-800"
-                                  : item.description_type === "k-street add-ons"
+                    {currentItems.map((item) => (
+                      <tr
+                        key={item.id}
+                        className="hover:bg-gradient-to-r hover:from-red-50 hover:to-red-50 transition-colors duration-150"
+                      >
+                        <td className="px-6 py-4 text-sm font-medium text-gray-900">
+                          #{item.id}
+                        </td>
+                        <td className="px-6 py-4 text-sm font-semibold text-blue-700">
+                          {item.product_code}
+                        </td>
+                        <td className="px-6 py-4 text-sm font-semibold text-gray-700">
+                          {item.name}
+                        </td>
+                        <td className="px-6 py-4 text-sm text-gray-600">
+                          <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-red-100 text-black-800">
+                            {item.category}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 text-sm text-gray-600">
+                          <span
+                            className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium ${
+                              item.description_type === "k-street food"
+                                ? "bg-green-100 text-green-800"
+                                : item.description_type === "k-street add-ons"
+                                ? "bg-blue-100 text-blue-800"
+                                : item.description_type === "k-street add sides"
+                                ? "bg-purple-100 text-purple-800"
+                                : item.description_type === "k-street upgrades"
+                                ? "bg-orange-100 text-orange-800"
+                                : "bg-gray-100 text-gray-800"
+                            }`}
+                          >
+                            {item.description_type}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 text-sm text-gray-600">
+                          <span
+                            className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium ${
+                              isAdmin
+                                ? item.branch === user.branch
                                   ? "bg-blue-100 text-blue-800"
-                                  : item.description_type ===
-                                    "k-street add sides"
-                                  ? "bg-purple-100 text-purple-800"
-                                  : item.description_type ===
-                                    "k-street upgrades"
-                                  ? "bg-orange-100 text-orange-800"
                                   : "bg-gray-100 text-gray-800"
-                              }`}
+                                : "bg-gray-100 text-gray-800"
+                            }`}
+                          >
+                            {item.branch || user.branch}
+                            {isAdmin && item.branch === user.branch && (
+                              <span className="ml-1">(Current)</span>
+                            )}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 text-sm font-semibold text-gray-900 text-right">
+                          ₱{parseFloat(item.price || 0).toFixed(2)}
+                        </td>
+                        <td className="px-6 py-4 text-center">
+                          <div className="flex justify-center gap-2">
+                            <button
+                              onClick={() => setViewItem(item)}
+                              className="bg-gradient-to-r from-black to-black text-white px-3 py-1.5 rounded-lg hover:from-red-600 hover:to-red-600 transition-all duration-200 text-sm font-medium shadow-sm hover:shadow-md"
                             >
-                              {item.description_type}
-                            </span>
-                          </td>
-                          <td className="px-6 py-4 text-sm font-semibold text-gray-900 text-right">
-                            ₱{parseFloat(item.price || 0).toFixed(2)}
-                          </td>
-                          <td className="px-6 py-4 text-center">
-                            <div className="flex justify-center gap-2">
-                              <button
-                                onClick={() => setViewItem(item)}
-                                className="bg-gradient-to-r from-black to-black text-white px-3 py-1.5 rounded-lg hover:from-red-600 hover:to-red-600 transition-all duration-200 text-sm font-medium shadow-sm hover:shadow-md"
-                              >
-                                View
-                              </button>
-                              <button
-                                onClick={() => handleEdit(item)}
-                                className="bg-gradient-to-r from-blue-500 to-blue-600 text-white px-3 py-1.5 rounded-lg hover:from-blue-600 hover:to-blue-700 transition-all duration-200 text-sm font-medium shadow-sm hover:shadow-md"
-                              >
-                                Edit
-                              </button>
-                              <button
-                                onClick={() => handleDeleteClick(item)}
-                                className="bg-gradient-to-r from-red-500 to-red-600 text-white px-3 py-1.5 rounded-lg hover:from-red-600 hover:to-red-700 transition-all duration-200 text-sm font-medium shadow-sm hover:shadow-md"
-                              >
-                                Delete
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
+                              View
+                            </button>
+                            <button
+                              onClick={() => handleEdit(item)}
+                              className="bg-gradient-to-r from-blue-500 to-blue-600 text-white px-3 py-1.5 rounded-lg hover:from-blue-600 hover:to-blue-700 transition-all duration-200 text-sm font-medium shadow-sm hover:shadow-md"
+                            >
+                              Edit
+                            </button>
+                            <button
+                              onClick={() => handleDeleteClick(item)}
+                              className="bg-gradient-to-r from-red-500 to-red-600 text-white px-3 py-1.5 rounded-lg hover:from-red-600 hover:to-red-700 transition-all duration-200 text-sm font-medium shadow-sm hover:shadow-md"
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
 
-                    {(!Array.isArray(currentItems) ||
-                      currentItems.length === 0) && (
+                    {currentItems.length === 0 && (
                       <tr>
-                        <td colSpan="7" className="text-center py-12">
+                        <td colSpan="8" className="text-center py-12">
                           <p className="text-gray-500 font-medium">
                             {searchTerm
                               ? "No items found matching your search"
                               : "No items available"}
                           </p>
-                          <p className="text-gray-400 text-sm mt-1">
-                            {searchTerm
-                              ? "Try a different search term"
-                              : "Add your first item to get started"}
-                          </p>
+                          {!searchTerm && (
+                            <p className="text-gray-400 text-sm mt-1">
+                              {isAdmin
+                                ? selectedBranch === "all"
+                                  ? "No items found in any branch"
+                                  : `No items available in branch: ${selectedBranch}`
+                                : `Add your first item to branch: ${user.branch}`}
+                            </p>
+                          )}
                         </td>
                       </tr>
                     )}
@@ -1041,7 +1310,7 @@ const Items = () => {
               </div>
 
               {/* Pagination */}
-              {Array.isArray(filteredItems) && filteredItems.length > 0 && (
+              {filteredItems.length > 0 && (
                 <div className="bg-gray-50 px-6 py-4 border-t border-gray-200 flex items-center justify-between">
                   <div className="text-sm text-gray-700">
                     Showing{" "}
@@ -1092,159 +1361,35 @@ const Items = () => {
           <>
             {/* Inventory Header with Stats */}
             <div className="mb-6">
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
-                <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
-                  <div className="flex items-center">
-                    <div className="bg-green-100 p-3 rounded-lg">
-                      <svg
-                        className="w-6 h-6 text-green-600"
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"
-                        />
-                      </svg>
-                    </div>
-                    <div className="ml-4">
-                      <p className="text-sm font-medium text-gray-600">
-                        Total Items
-                      </p>
-                      <p className="text-2xl font-bold text-gray-900">
-                        {Array.isArray(inventoryItems)
-                          ? inventoryItems.length
-                          : 0}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-                <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
-                  <div className="flex items-center">
-                    <div className="bg-blue-100 p-3 rounded-lg">
-                      <svg
-                        className="w-6 h-6 text-blue-600"
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
-                        />
-                      </svg>
-                    </div>
-                    <div className="ml-4">
-                      <p className="text-sm font-medium text-gray-600">
-                        In Stock
-                      </p>
-                      <p className="text-2xl font-bold text-gray-900">
-                        {Array.isArray(inventoryItems)
-                          ? inventoryItems.filter(
-                              (item) => item.current_stock > 0
-                            ).length
-                          : 0}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-                <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
-                  <div className="flex items-center">
-                    <div className="bg-red-100 p-3 rounded-lg">
-                      <svg
-                        className="w-6 h-6 text-red-600"
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-                        />
-                      </svg>
-                    </div>
-                    <div className="ml-4">
-                      <p className="text-sm font-medium text-gray-600">
-                        Low Stock
-                      </p>
-                      <p className="text-2xl font-bold text-red-600">
-                        {lowStockItems.length}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-                <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
-                  <div className="flex items-center">
-                    <div className="bg-orange-100 p-3 rounded-lg">
-                      <svg
-                        className="w-6 h-6 text-orange-600"
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"
-                        />
-                      </svg>
-                    </div>
-                    <div className="ml-4">
-                      <p className="text-sm font-medium text-gray-600">
-                        Out of Stock
-                      </p>
-                      <p className="text-2xl font-bold text-orange-600">
-                        {Array.isArray(inventoryItems)
-                          ? inventoryItems.filter(
-                              (item) => item.current_stock <= 0
-                            ).length
-                          : 0}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Search and Add Button */}
+              {/* Search and Add Button with Branch Filter */}
               <div className="flex justify-between items-center">
-                <div className="relative max-w-md">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                    <svg
-                      className="h-5 w-5 text-gray-400"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
-                      />
-                    </svg>
-                  </div>
-                  <input
-                    type="text"
-                    placeholder="Search inventory items..."
-                    value={inventorySearch}
-                    onChange={(e) => setInventorySearch(e.target.value)}
-                    className="w-full pl-10 pr-12 py-3 border-2 border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent transition-all"
-                  />
-                  {inventorySearch && (
-                    <button
-                      onClick={handleClearInventorySearch}
-                      className="absolute inset-y-0 right-0 pr-3 flex items-center"
-                    >
+                <div className="flex items-center gap-4">
+                  {/* Branch Filter Dropdown (for Admin) */}
+                  {isAdmin && (
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium text-gray-700 whitespace-nowrap">
+                        Branch:
+                      </span>
+                      <select
+                        value={selectedBranch}
+                        onChange={(e) => handleBranchChange(e.target.value)}
+                        className="border border-gray-300 rounded-lg px-4 py-2.5 text-sm focus:ring-2 focus:ring-red-500 focus:border-transparent transition-all bg-white min-w-[180px]"
+                      >
+                        <option value="all">All Branches</option>
+                        {allBranches.map((branch) => (
+                          <option key={branch} value={branch}>
+                            {branch} {branch === user.branch ? "" : ""}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
+                  {/* Search Bar for Inventory */}
+                  <div className="relative max-w-md">
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                       <svg
-                        className="h-5 w-5 text-gray-400 hover:text-gray-600"
+                        className="h-5 w-5 text-gray-400"
                         fill="none"
                         stroke="currentColor"
                         viewBox="0 0 24 24"
@@ -1253,14 +1398,55 @@ const Items = () => {
                           strokeLinecap="round"
                           strokeLinejoin="round"
                           strokeWidth={2}
-                          d="M6 18L18 6M6 6l12 12"
+                          d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
                         />
                       </svg>
-                    </button>
-                  )}
+                    </div>
+                    <input
+                      type="text"
+                      placeholder="Search inventory items..."
+                      value={inventorySearch}
+                      onChange={(e) => setInventorySearch(e.target.value)}
+                      className="w-full pl-10 pr-12 py-3 border-2 border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent transition-all"
+                    />
+                    {inventorySearch && (
+                      <button
+                        onClick={handleClearInventorySearch}
+                        className="absolute inset-y-0 right-0 pr-3 flex items-center"
+                      >
+                        <svg
+                          className="h-5 w-5 text-gray-400 hover:text-gray-600"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M6 18L18 6M6 6l12 12"
+                          />
+                        </svg>
+                      </button>
+                    )}
+                  </div>
                 </div>
+
+                {/* Add Inventory Button */}
                 <button
                   onClick={() => {
+                    if (!user?.branch && !isAdmin) {
+                      alert(
+                        "Cannot determine your branch. Please login again."
+                      );
+                      return;
+                    }
+
+                    if (isAdmin && !selectedBranch) {
+                      alert("Please select a branch first!");
+                      return;
+                    }
+
                     setEditingInventory(null);
                     setNewInventoryItem({
                       product_code: "",
@@ -1277,7 +1463,7 @@ const Items = () => {
                     });
                     setShowInventoryModal(true);
                   }}
-                  className="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 flex items-center"
+                  className="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 flex items-center whitespace-nowrap"
                 >
                   <svg
                     className="w-5 h-5 mr-2"
@@ -1297,7 +1483,7 @@ const Items = () => {
               </div>
             </div>
 
-            {/* Inventory Table - UPDATED WITH TOTAL PRICE COLUMN */}
+            {/* Inventory Table */}
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
               <div className="overflow-x-auto">
                 <table className="w-full">
@@ -1327,6 +1513,9 @@ const Items = () => {
                       <th className="px-6 py-4 text-left text-sm font-semibold tracking-wide">
                         Total Price
                       </th>
+                      <th className="px-6 py-4 text-left text-sm font-semibold tracking-wide">
+                        Branch
+                      </th>
                       <th className="px-6 py-4 text-center text-sm font-semibold tracking-wide">
                         Status
                       </th>
@@ -1336,130 +1525,238 @@ const Items = () => {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
-                    {Array.isArray(filteredInventory) &&
-                      filteredInventory.map((item) => (
-                        <tr
-                          key={item.id}
-                          className={`hover:bg-gray-50 transition-colors duration-150 ${
-                            item.current_stock <= item.min_stock
-                              ? "bg-red-50"
-                              : ""
-                          }`}
-                        >
-                          <td className="px-6 py-4 text-sm font-semibold text-blue-700">
-                            {item.product_code}
-                          </td>
-                          <td className="px-6 py-4 text-sm font-semibold text-gray-700">
-                            {item.name}
-                          </td>
-                          <td className="px-6 py-4 text-sm text-gray-600">
-                            <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-red-100 text-black-800">
-                              {item.category}
-                            </span>
-                          </td>
-                          <td className="px-6 py-4 text-sm font-semibold text-gray-900">
-                            <span
-                              className={
+                    {/* Calculate pagination for inventory items */}
+                    {(() => {
+                      const inventoryIndexOfLastItem =
+                        currentPage * itemsPerPage;
+                      const inventoryIndexOfFirstItem =
+                        inventoryIndexOfLastItem - itemsPerPage;
+                      const currentInventoryItems = Array.isArray(
+                        filteredInventory
+                      )
+                        ? filteredInventory.slice(
+                            inventoryIndexOfFirstItem,
+                            inventoryIndexOfLastItem
+                          )
+                        : [];
+                      const inventoryTotalPages = Math.ceil(
+                        (Array.isArray(filteredInventory)
+                          ? filteredInventory.length
+                          : 0) / itemsPerPage
+                      );
+
+                      return (
+                        <>
+                          {currentInventoryItems.map((item) => (
+                            <tr
+                              key={item.id}
+                              className={`hover:bg-gray-50 transition-colors duration-150 ${
                                 item.current_stock <= item.min_stock
-                                  ? "text-red-600 font-bold"
+                                  ? "bg-red-50"
                                   : ""
-                              }
-                            >
-                              {typeof item.current_stock === "number"
-                                ? item.current_stock.toFixed(2)
-                                : parseFloat(item.current_stock || 0).toFixed(
-                                    2
-                                  )}{" "}
-                              {item.display_unit || item.unit}
-                            </span>
-                          </td>
-                          <td className="px-6 py-4 text-sm text-gray-600">
-                            {typeof item.min_stock === "number"
-                              ? item.min_stock.toFixed(2)
-                              : parseFloat(item.min_stock || 0).toFixed(2)}{" "}
-                            {item.display_unit || item.unit}
-                          </td>
-                          <td className="px-6 py-4 text-sm text-gray-600">
-                            {item.display_unit || item.unit}
-                          </td>
-                          <td className="px-6 py-4 text-sm font-semibold text-green-900">
-                            {item.price > 0 ? (
-                              <>₱{parseFloat(item.price || 0).toFixed(2)}</>
-                            ) : (
-                              <span className="text-gray-400">No price</span>
-                            )}
-                          </td>
-                          <td className="px-6 py-4 text-sm font-semibold text-blue-900">
-                            {item.total_price > 0 ? (
-                              <>
-                                ₱{parseFloat(item.total_price || 0).toFixed(2)}
-                              </>
-                            ) : (
-                              <span className="text-gray-400">-</span>
-                            )}
-                          </td>
-                          <td className="px-6 py-4 text-center">
-                            <span
-                              className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium ${
-                                item.current_stock <= 0
-                                  ? "bg-red-100 text-red-800"
-                                  : item.current_stock <= item.min_stock
-                                  ? "bg-orange-100 text-orange-800"
-                                  : "bg-green-100 text-green-800"
                               }`}
                             >
-                              {item.current_stock <= 0
-                                ? "Out of Stock"
-                                : item.current_stock <= item.min_stock
-                                ? "Low Stock"
-                                : "In Stock"}
-                            </span>
-                          </td>
-                          <td className="px-6 py-4 text-center">
-                            <div className="flex justify-center gap-2">
-                              <button
-                                onClick={() => handleAddStock(item)}
-                                className="bg-gradient-to-r from-green-500 to-green-600 text-white px-3 py-1.5 rounded-lg hover:from-green-600 hover:to-green-700 transition-all duration-200 text-sm font-medium shadow-sm hover:shadow-md"
-                              >
-                                Stock
-                              </button>
-                              <button
-                                onClick={() => handleEditInventory(item)}
-                                className="bg-gradient-to-r from-blue-500 to-blue-600 text-white px-3 py-1.5 rounded-lg hover:from-blue-600 hover:to-blue-700 transition-all duration-200 text-sm font-medium shadow-sm hover:shadow-md"
-                              >
-                                Edit
-                              </button>
-                              <button
-                                onClick={() => handleDeleteInventoryClick(item)}
-                                className="bg-gradient-to-r from-red-500 to-red-600 text-white px-3 py-1.5 rounded-lg hover:from-red-600 hover:to-red-700 transition-all duration-200 text-sm font-medium shadow-sm hover:shadow-md"
-                              >
-                                Delete
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
+                              <td className="px-6 py-4 text-sm font-semibold text-blue-700">
+                                {item.product_code}
+                              </td>
+                              <td className="px-6 py-4 text-sm font-semibold text-gray-700">
+                                {item.name}
+                              </td>
+                              <td className="px-6 py-4 text-sm text-gray-600">
+                                <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-red-100 text-black-800">
+                                  {item.category}
+                                </span>
+                              </td>
+                              <td className="px-6 py-4 text-sm font-semibold text-gray-900">
+                                <span
+                                  className={
+                                    item.current_stock <= item.min_stock
+                                      ? "text-red-600 font-bold"
+                                      : ""
+                                  }
+                                >
+                                  {typeof item.current_stock === "number"
+                                    ? item.current_stock.toFixed(2)
+                                    : parseFloat(
+                                        item.current_stock || 0
+                                      ).toFixed(2)}{" "}
+                                  {item.display_unit || item.unit}
+                                </span>
+                              </td>
+                              <td className="px-6 py-4 text-sm text-gray-600">
+                                {typeof item.min_stock === "number"
+                                  ? item.min_stock.toFixed(2)
+                                  : parseFloat(item.min_stock || 0).toFixed(
+                                      2
+                                    )}{" "}
+                                {item.display_unit || item.unit}
+                              </td>
+                              <td className="px-6 py-4 text-sm text-gray-600">
+                                {item.display_unit || item.unit}
+                              </td>
+                              <td className="px-6 py-4 text-sm font-semibold text-green-900">
+                                {item.price > 0 ? (
+                                  <>₱{parseFloat(item.price || 0).toFixed(2)}</>
+                                ) : (
+                                  <span className="text-gray-400">
+                                    No price
+                                  </span>
+                                )}
+                              </td>
+                              <td className="px-6 py-4 text-sm font-semibold text-blue-900">
+                                {item.total_price > 0 ? (
+                                  <>
+                                    ₱
+                                    {parseFloat(item.total_price || 0).toFixed(
+                                      2
+                                    )}
+                                  </>
+                                ) : (
+                                  <span className="text-gray-400">-</span>
+                                )}
+                              </td>
+                              <td className="px-6 py-4 text-sm text-gray-600">
+                                <span
+                                  className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium ${
+                                    isAdmin
+                                      ? item.branch === user.branch
+                                        ? "bg-blue-100 text-blue-800"
+                                        : "bg-gray-100 text-gray-800"
+                                      : "bg-gray-100 text-gray-800"
+                                  }`}
+                                >
+                                  {item.branch || user.branch}
+                                </span>
+                              </td>
+                              <td className="px-6 py-4 text-center">
+                                <span
+                                  className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium ${
+                                    item.current_stock <= 0
+                                      ? "bg-red-100 text-red-800"
+                                      : item.current_stock <= item.min_stock
+                                      ? "bg-orange-100 text-orange-800"
+                                      : "bg-green-100 text-green-800"
+                                  }`}
+                                >
+                                  {item.current_stock <= 0
+                                    ? "Out of Stock"
+                                    : item.current_stock <= item.min_stock
+                                    ? "Low Stock"
+                                    : "In Stock"}
+                                </span>
+                              </td>
+                              <td className="px-6 py-4 text-center">
+                                <div className="flex justify-center gap-2">
+                                  <button
+                                    onClick={() => handleAddStock(item)}
+                                    className="bg-gradient-to-r from-green-500 to-green-600 text-white px-3 py-1.5 rounded-lg hover:from-green-600 hover:to-green-700 transition-all duration-200 text-sm font-medium shadow-sm hover:shadow-md"
+                                  >
+                                    Stock
+                                  </button>
+                                  <button
+                                    onClick={() => handleEditInventory(item)}
+                                    className="bg-gradient-to-r from-blue-500 to-blue-600 text-white px-3 py-1.5 rounded-lg hover:from-blue-600 hover:to-blue-700 transition-all duration-200 text-sm font-medium shadow-sm hover:shadow-md"
+                                  >
+                                    Edit
+                                  </button>
+                                  <button
+                                    onClick={() =>
+                                      handleDeleteInventoryClick(item)
+                                    }
+                                    className="bg-gradient-to-r from-red-500 to-red-600 text-white px-3 py-1.5 rounded-lg hover:from-red-600 hover:to-red-700 transition-all duration-200 text-sm font-medium shadow-sm hover:shadow-md"
+                                  >
+                                    Delete
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
 
-                    {(!Array.isArray(filteredInventory) ||
-                      filteredInventory.length === 0) && (
-                      <tr>
-                        <td colSpan="10" className="text-center py-12">
-                          <p className="text-gray-500 font-medium">
-                            {inventorySearch
-                              ? "No inventory items found matching your search"
-                              : "No inventory items available"}
-                          </p>
-                          <p className="text-gray-400 text-sm mt-1">
-                            {inventorySearch
-                              ? "Try a different search term"
-                              : "Add your first inventory item to get started"}
-                          </p>
-                        </td>
-                      </tr>
-                    )}
+                          {currentInventoryItems.length === 0 && (
+                            <tr>
+                              <td colSpan="11" className="text-center py-12">
+                                <p className="text-gray-500 font-medium">
+                                  {inventorySearch
+                                    ? "No inventory items found matching your search"
+                                    : "No inventory items available"}
+                                </p>
+                                {!inventorySearch && (
+                                  <p className="text-gray-400 text-sm mt-1">
+                                    {isAdmin
+                                      ? selectedBranch === "all"
+                                        ? "No inventory items found in any branch"
+                                        : `No inventory items available in branch: ${selectedBranch}`
+                                      : `Add your first inventory item to branch: ${user.branch}`}
+                                  </p>
+                                )}
+                              </td>
+                            </tr>
+                          )}
+                        </>
+                      );
+                    })()}
                   </tbody>
                 </table>
               </div>
+
+              {/* INVENTORY PAGINATION */}
+              {filteredInventory.length > 0 && (
+                <div className="bg-gray-50 px-6 py-4 border-t border-gray-200 flex items-center justify-between">
+                  <div className="text-sm text-gray-700">
+                    Showing{" "}
+                    <span className="font-medium">
+                      {Math.min(
+                        (currentPage - 1) * itemsPerPage + 1,
+                        filteredInventory.length
+                      )}
+                    </span>{" "}
+                    to{" "}
+                    <span className="font-medium">
+                      {Math.min(
+                        currentPage * itemsPerPage,
+                        filteredInventory.length
+                      )}
+                    </span>{" "}
+                    of{" "}
+                    <span className="font-medium">
+                      {filteredInventory.length}
+                    </span>{" "}
+                    results
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={handlePrevPage}
+                      disabled={currentPage === 1}
+                      className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                        currentPage === 1
+                          ? "bg-gray-200 text-gray-400 cursor-not-allowed"
+                          : "bg-white text-gray-700 hover:bg-gray-100 border border-gray-300"
+                      }`}
+                    >
+                      Previous
+                    </button>
+                    <div className="flex items-center px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm font-medium text-gray-700">
+                      Page {currentPage} of{" "}
+                      {Math.ceil(filteredInventory.length / itemsPerPage)}
+                    </div>
+                    <button
+                      onClick={handleNextPage}
+                      disabled={
+                        currentPage ===
+                        Math.ceil(filteredInventory.length / itemsPerPage)
+                      }
+                      className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                        currentPage ===
+                        Math.ceil(filteredInventory.length / itemsPerPage)
+                          ? "bg-gray-200 text-gray-400 cursor-not-allowed"
+                          : "bg-gradient-to-r from-red-500 to-red-500 text-white hover:from-black hover:to-black"
+                      }`}
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Low Stock Alert */}
@@ -1501,25 +1798,6 @@ const Items = () => {
           </>
         )}
 
-        {/* Placeholder for other reports */}
-        {activeReport !== "PRODUCTLIST" && activeReport !== "ITEMINVENTORY" && (
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-8 text-center">
-            <div className="text-4xl mb-4">📋</div>
-            <h3 className="text-xl font-bold text-gray-700 mb-2">
-              {activeReport.replace("-", " ").toUpperCase()} REPORT
-            </h3>
-            <p className="text-gray-500 mb-4">
-              This report is currently under development
-            </p>
-            <div className="bg-gray-100 p-4 rounded-lg">
-              <p className="text-sm text-gray-600">
-                <strong>Available Data:</strong> You can implement different
-                data views here based on the selected report type.
-              </p>
-            </div>
-          </div>
-        )}
-
         {/* Add/Edit Product Modal */}
         {showFormModal && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
@@ -1527,6 +1805,45 @@ const Items = () => {
               <h2 className="text-xl font-bold mb-4">
                 {editingItem ? "Edit Product" : "Add New Product"}
               </h2>
+
+              {/* BRANCH INFO IN MODAL */}
+              <div className="mb-4 bg-blue-50 p-3 rounded-lg border border-blue-200">
+                {isAdmin ? (
+                  <div>
+                    <label className="block text-sm font-medium text-blue-700 mb-1">
+                      Select Branch for this Product *
+                    </label>
+                    <select
+                      value={
+                        newItem.branch ||
+                        (selectedBranch === "all"
+                          ? user.branch
+                          : selectedBranch)
+                      }
+                      onChange={(e) =>
+                        setNewItem({
+                          ...newItem,
+                          branch: e.target.value,
+                        })
+                      }
+                      className="border border-gray-300 p-2 rounded-lg w-full focus:ring-2 focus:ring-red-500 focus:border-transparent"
+                    >
+                      {allBranches.map((branch) => (
+                        <option key={branch} value={branch}>
+                          {branch}{" "}
+                          {branch === user.branch ? "(Your Branch)" : ""}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ) : (
+                  <p className="text-sm text-blue-700 font-medium">
+                    This product will be added to:{" "}
+                    <span className="font-bold">{user.branch}</span> branch
+                  </p>
+                )}
+              </div>
+
               <div className="grid grid-cols-1 gap-3">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -1559,10 +1876,7 @@ const Items = () => {
                     placeholder="Enter product name"
                     value={newItem.name}
                     onChange={(e) =>
-                      setNewItem({
-                        ...newItem,
-                        name: e.target.value,
-                      })
+                      setNewItem({ ...newItem, name: e.target.value })
                     }
                     className="border border-gray-300 p-2.5 rounded-lg w-full focus:ring-2 focus:ring-red-500 focus:border-transparent transition-all"
                   />
@@ -1575,10 +1889,7 @@ const Items = () => {
                   <select
                     value={newItem.category}
                     onChange={(e) =>
-                      setNewItem({
-                        ...newItem,
-                        category: e.target.value,
-                      })
+                      setNewItem({ ...newItem, category: e.target.value })
                     }
                     className="border border-gray-300 p-2.5 rounded-lg w-full focus:ring-2 focus:ring-red-500 focus:border-transparent transition-all"
                   >
@@ -1600,7 +1911,6 @@ const Items = () => {
                       setNewItem({
                         ...newItem,
                         description_type: selectedType,
-                        // Auto-fill price for flavor items
                         price:
                           selectedType === "k-street Flavor"
                             ? "0"
@@ -1622,7 +1932,6 @@ const Items = () => {
                   </p>
                 </div>
 
-                {/* Price field sa modal */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     Price *
@@ -1647,10 +1956,7 @@ const Items = () => {
                     }
                     onChange={(e) => {
                       if (newItem.description_type !== "k-street Flavor") {
-                        setNewItem({
-                          ...newItem,
-                          price: e.target.value,
-                        });
+                        setNewItem({ ...newItem, price: e.target.value });
                       }
                     }}
                     disabled={newItem.description_type === "k-street Flavor"}
@@ -1677,10 +1983,7 @@ const Items = () => {
                     placeholder="Enter image URL"
                     value={newItem.image}
                     onChange={(e) =>
-                      setNewItem({
-                        ...newItem,
-                        image: e.target.value,
-                      })
+                      setNewItem({ ...newItem, image: e.target.value })
                     }
                     className="border border-gray-300 p-2.5 rounded-lg w-full focus:ring-2 focus:ring-red-500 focus:border-transparent transition-all"
                   />
@@ -1699,30 +2002,6 @@ const Items = () => {
                     />
                   </div>
                 )}
-
-                {/* Info Box for Flavor Items */}
-                {newItem.description_type === "k-street Flavor" &&
-                  newItem.product_code && (
-                    <div className="bg-blue-50 p-3 rounded-lg border border-blue-200">
-                      <h4 className="text-sm font-semibold text-blue-800 mb-1">
-                        Flavor Item Information
-                      </h4>
-                      <p className="text-xs text-blue-700 mb-1">
-                        ✅ This is a flavor variation item
-                      </p>
-                      <p className="text-xs text-blue-700 mb-1">
-                        ✅ Product Code: <strong>{newItem.product_code}</strong>
-                      </p>
-                      <p className="text-xs text-blue-700">
-                        ✅ Price will be automatically inherited from the base
-                        product
-                      </p>
-                      <p className="text-xs text-gray-600 mt-2">
-                        <strong>Note:</strong> Make sure the product code
-                        matches the base product you want to create a flavor for
-                      </p>
-                    </div>
-                  )}
               </div>
               <div className="mt-6 flex justify-end gap-3">
                 <button
@@ -1754,6 +2033,45 @@ const Items = () => {
                   ? "Edit Inventory Item"
                   : "Add New Inventory Item"}
               </h2>
+
+              {/* BRANCH INFO IN MODAL */}
+              <div className="mb-4 bg-blue-50 p-3 rounded-lg border border-blue-200">
+                {isAdmin ? (
+                  <div>
+                    <label className="block text-sm font-medium text-blue-700 mb-1">
+                      Select Branch for this Inventory Item *
+                    </label>
+                    <select
+                      value={
+                        newInventoryItem.branch ||
+                        (selectedBranch === "all"
+                          ? user.branch
+                          : selectedBranch)
+                      }
+                      onChange={(e) =>
+                        setNewInventoryItem({
+                          ...newInventoryItem,
+                          branch: e.target.value,
+                        })
+                      }
+                      className="border border-gray-300 p-2 rounded-lg w-full focus:ring-2 focus:ring-red-500 focus:border-transparent"
+                    >
+                      {allBranches.map((branch) => (
+                        <option key={branch} value={branch}>
+                          {branch}{" "}
+                          {branch === user.branch ? "(Your Branch)" : ""}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ) : (
+                  <p className="text-sm text-blue-700 font-medium">
+                    This inventory item will be added to:{" "}
+                    <span className="font-bold">{user.branch}</span> branch
+                  </p>
+                )}
+              </div>
+
               <div className="grid grid-cols-1 gap-3">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -1761,7 +2079,7 @@ const Items = () => {
                   </label>
                   <input
                     type="text"
-                    placeholder="Enter product code (e.g., BEEF001, BUN001)"
+                    placeholder="Enter product code"
                     value={newInventoryItem.product_code}
                     onChange={(e) =>
                       setNewInventoryItem({
@@ -1900,7 +2218,7 @@ const Items = () => {
                     <input
                       type="number"
                       step="0.01"
-                      placeholder="0.00 (Leave empty for migration)"
+                      placeholder="0.00"
                       value={newInventoryItem.price}
                       onChange={(e) =>
                         setNewInventoryItem({
@@ -1952,7 +2270,7 @@ const Items = () => {
                   </div>
                 </div>
 
-                {/* Total Price Display (Read-only) */}
+                {/* Total Price Display */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     Total Price (Auto-calculated)
@@ -1968,8 +2286,7 @@ const Items = () => {
                 {/* Info box */}
                 <div className="bg-blue-50 p-3 rounded-lg border border-blue-200">
                   <p className="text-sm text-blue-700">
-                    <strong>Note:</strong> Price is optional for migration.
-                    Leave empty if no price data available.
+                    <strong>Note:</strong> Price is optional.
                   </p>
                   <p className="text-xs text-blue-600 mt-1">
                     <strong>Total Quantity to Add:</strong>{" "}
@@ -2019,13 +2336,22 @@ const Items = () => {
           </div>
         )}
 
-        {/* Stock Transaction Modal - UPDATED WITH PRICE AND QUANTITY */}
+        {/* Stock Transaction Modal */}
         {showStockModal && selectedInventory && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
             <div className="bg-white p-6 rounded-2xl shadow-2xl max-w-md w-full">
               <h2 className="text-xl font-bold mb-4">
                 Stock Management - {selectedInventory.name}
               </h2>
+
+              {/* BRANCH INFO */}
+              {selectedInventory.branch && (
+                <div className="mb-3 bg-blue-50 p-2 rounded-lg">
+                  <p className="text-xs text-blue-700">
+                    Branch: <strong>{selectedInventory.branch}</strong>
+                  </p>
+                </div>
+              )}
 
               <div className="mb-4 p-3 bg-gray-50 rounded-lg">
                 <p className="text-sm text-gray-600">
@@ -2142,7 +2468,7 @@ const Items = () => {
                   </p>
                 </div>
 
-                {/* Auto-calculated totals */}
+                {/* Calculations */}
                 <div className="bg-blue-50 p-3 rounded-lg border border-blue-200 mt-2">
                   <h4 className="text-sm font-semibold text-blue-800 mb-1">
                     Calculations
@@ -2274,6 +2600,9 @@ const Items = () => {
                 <p className="text-center text-xs text-gray-500 mt-1">
                   Product Code: <strong>{itemToDelete.product_code}</strong>
                 </p>
+                <p className="text-center text-xs text-gray-500 mt-1">
+                  Branch: <strong>{itemToDelete.branch || user?.branch}</strong>
+                </p>
                 <p className="text-center text-sm text-red-500 mt-3">
                   This action cannot be undone.
                 </p>
@@ -2351,6 +2680,10 @@ const Items = () => {
                   Product Code:{" "}
                   <strong>{inventoryToDelete.product_code}</strong>
                 </p>
+                <p className="text-center text-xs text-gray-500 mt-1">
+                  Branch:{" "}
+                  <strong>{inventoryToDelete.branch || user?.branch}</strong>
+                </p>
                 <p className="text-center text-sm text-red-500 mt-3">
                   This will permanently remove the item from inventory.
                 </p>
@@ -2398,6 +2731,19 @@ const Items = () => {
               <h2 className="text-xl font-bold text-center text-gray-800 mb-2">
                 {successMessage}
               </h2>
+              {selectedBranch && isAdmin && (
+                <p className="text-center text-sm text-blue-600 mb-2">
+                  Branch:{" "}
+                  <strong>
+                    {selectedBranch === "all" ? "All Branches" : selectedBranch}
+                  </strong>
+                </p>
+              )}
+              {!isAdmin && user?.branch && (
+                <p className="text-center text-sm text-blue-600 mb-2">
+                  Branch: <strong>{user.branch}</strong>
+                </p>
+              )}
               <p className="text-center text-gray-600 mb-6">
                 Operation completed successfully!
               </p>
@@ -2460,6 +2806,23 @@ const Items = () => {
                   <strong className="text-gray-900">Price:</strong> ₱
                   {parseFloat(viewItem.price || 0).toFixed(2)}
                 </p>
+                {viewItem.branch && (
+                  <p className="text-gray-700">
+                    <strong className="text-gray-900">Branch:</strong>{" "}
+                    <span
+                      className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                        isAdmin && viewItem.branch === user.branch
+                          ? "bg-blue-100 text-blue-800"
+                          : "bg-gray-100 text-gray-800"
+                      }`}
+                    >
+                      {viewItem.branch}
+                      {isAdmin && viewItem.branch === user.branch && (
+                        <span className="ml-1">(Current)</span>
+                      )}
+                    </span>
+                  </p>
+                )}
               </div>
               <div className="mt-6 text-right">
                 <button

@@ -22,6 +22,9 @@ import {
   UserCheck,
   UserCog,
   RefreshCw,
+  Building,
+  Filter,
+  ChevronDown,
 } from "lucide-react";
 
 export default function Dashboard() {
@@ -40,29 +43,53 @@ export default function Dashboard() {
   const [announcements, setAnnouncements] = useState([]);
   const [orders, setOrders] = useState([]);
   const [salesData, setSalesData] = useState([]);
+  const [branches, setBranches] = useState([]);
+  const [selectedBranchFilter, setSelectedBranchFilter] = useState("all");
 
   const [newAnnouncement, setNewAnnouncement] = useState({
     title: "",
     message: "",
     type: "info",
+    is_global: false,
   });
-
   const [employees, setEmployees] = useState([]);
 
   const [newUser, setNewUser] = useState({
     email: "",
+    username: "",
     password: "",
     confirmPassword: "",
     role: "cashier",
     status: "Active",
+    branch: "main",
   });
 
   const navigate = useNavigate();
 
+  const getAuthHeaders = () => {
+    const userData = localStorage.getItem("user");
+    if (!userData) return {};
+
+    try {
+      const user = JSON.parse(userData);
+      return {
+        user: JSON.stringify(user),
+        "x-user": JSON.stringify(user),
+        "Content-Type": "application/json",
+      };
+    } catch (error) {
+      console.error("Error parsing user data:", error);
+      return {};
+    }
+  };
+
   const fetchUsers = async () => {
     setLoading(true);
     try {
-      const response = await fetch("http://localhost:3002/users");
+      const headers = getAuthHeaders();
+      const response = await fetch("http://localhost:3002/users", {
+        headers: headers,
+      });
 
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
@@ -71,34 +98,47 @@ export default function Dashboard() {
       const data = await response.json();
       console.log("Users API Response:", data);
 
-      // Handle both array and object response formats
       if (Array.isArray(data)) {
-        // Direct array response
         const transformedUsers = data.map((user) => ({
           id: user.id,
           email: user.email,
+          username: user.username || "",
           role: user.role || "cashier",
           created_at: user.created_at,
           status: user.status || "Active",
+          branch: user.branch || "main",
         }));
         setEmployees(transformedUsers);
+
+        const uniqueBranches = [
+          ...new Set(transformedUsers.map((u) => u.branch || "main")),
+        ];
+        setBranches(uniqueBranches);
       } else if (data.success && Array.isArray(data.users)) {
-        // Object with success flag
         const transformedUsers = data.users.map((user) => ({
           id: user.id,
           email: user.email,
+          username: user.username || "",
           role: user.role || "cashier",
           created_at: user.created_at,
           status: user.status || "Active",
+          branch: user.branch || "main",
         }));
         setEmployees(transformedUsers);
+
+        const uniqueBranches = [
+          ...new Set(transformedUsers.map((u) => u.branch || "main")),
+        ];
+        setBranches(uniqueBranches);
       } else {
         console.error("Unexpected users response format:", data);
         setEmployees([]);
+        setBranches([]);
       }
     } catch (error) {
       console.error("Error fetching users:", error);
       setEmployees([]);
+      setBranches([]);
     } finally {
       setLoading(false);
     }
@@ -107,7 +147,34 @@ export default function Dashboard() {
   const fetchAnnouncements = async () => {
     setAnnouncementsLoading(true);
     try {
-      const response = await fetch("http://localhost:3002/announcements");
+      const userBranch = user?.branch;
+      const userRole = user?.role;
+
+      console.log("Fetching announcements for:", {
+        branch: userBranch,
+        role: userRole,
+        selectedBranchFilter: selectedBranchFilter,
+      });
+
+      let url = "http://localhost:3002/announcements";
+
+      if (
+        (userRole === "admin" || userRole === "owner") &&
+        selectedBranchFilter !== "all"
+      ) {
+        url = `http://localhost:3002/announcements?branch=${selectedBranchFilter}`;
+      } else if (userRole === "admin" || userRole === "owner") {
+        url = "http://localhost:3002/announcements";
+      } else {
+        url = `http://localhost:3002/announcements?branch=${userBranch}`;
+      }
+
+      console.log("Fetching from URL:", url);
+
+      const headers = getAuthHeaders();
+      const response = await fetch(url, {
+        headers: headers,
+      });
 
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
@@ -116,7 +183,6 @@ export default function Dashboard() {
       const data = await response.json();
       console.log("Announcements API Response:", data);
 
-      // Handle both array and object response formats
       let announcementsData = [];
 
       if (Array.isArray(data)) {
@@ -133,11 +199,16 @@ export default function Dashboard() {
           id: announcement.id,
           type: announcement.type || "info",
           title: announcement.title,
-          message: announcement.content || announcement.message,
+          message: announcement.message || announcement.content || "",
           time: getTimeAgo(announcement.created_at),
           icon: getAnnouncementIcon(announcement.type || "info"),
           color: getAnnouncementColor(announcement.type || "info"),
           created_at: announcement.created_at,
+          branch: announcement.is_global
+            ? "All Branches"
+            : announcement.branch || "main",
+          is_global: announcement.is_global || false,
+          author: announcement.author || "Admin",
         })
       );
 
@@ -153,16 +224,37 @@ export default function Dashboard() {
   const fetchOrders = async () => {
     setOrdersLoading(true);
     try {
-      const response = await fetch("http://localhost:3002/orders");
+      const headers = getAuthHeaders();
+
+      let url = "http://localhost:3002/orders";
+
+      console.log("Fetching orders for branch filter:", selectedBranchFilter);
+      console.log("User role:", user?.role);
+
+      if (
+        selectedBranchFilter !== "all" &&
+        (user?.role === "admin" || user?.role === "owner")
+      ) {
+        url = `http://localhost:3002/orders?branch=${selectedBranchFilter}`;
+        console.log("Using filtered URL:", url);
+      } else if (user?.role !== "admin" && user?.role !== "owner") {
+        url = `http://localhost:3002/orders?branch=${user?.branch || "main"}`;
+        console.log("Non-admin user, using branch:", user?.branch);
+      }
+
+      console.log("Final URL:", url);
+
+      const response = await fetch(url, {
+        headers: headers,
+      });
 
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
 
       const ordersData = await response.json();
-      console.log("Orders API Response:", ordersData);
+      console.log("Orders API Response data count:", ordersData.length || 0);
 
-      // Handle both array and object response formats
       let ordersArray = [];
 
       if (Array.isArray(ordersData)) {
@@ -174,9 +266,40 @@ export default function Dashboard() {
         ordersArray = [];
       }
 
+      console.log(`Found ${ordersArray.length} orders for current filter`);
+
+      if (ordersArray.length > 0) {
+        ordersArray.slice(0, 3).forEach((order, index) => {
+          console.log(`Sample Order ${index + 1}:`, {
+            id: order.id,
+            total: order.total,
+            paidAmount: order.paidAmount,
+            branch: order.branch,
+            created_at: order.created_at,
+          });
+        });
+      }
+
       setOrders(ordersArray);
+
+      const uniqueBranches = [
+        ...new Set(ordersArray.map((order) => order.branch || "main")),
+      ];
+      console.log("Unique branches from orders:", uniqueBranches);
+
+      setBranches((prev) => {
+        const combined = [...new Set([...prev, ...uniqueBranches])];
+        console.log("All unique branches combined:", combined);
+        return combined;
+      });
+
       const processedData = processOrdersData(ordersArray);
       setSalesData(processedData);
+
+      setTimeout(() => {
+        const stats = calculateStats();
+        console.log("Stats after fetch:", stats);
+      }, 100);
     } catch (error) {
       console.error("Error fetching orders:", error);
       setOrders([]);
@@ -204,11 +327,18 @@ export default function Dashboard() {
     }));
 
     orders.forEach((order) => {
+      if (!order.created_at) return;
+
       const orderDate = new Date(order.created_at).toISOString().split("T")[0];
       const dayIndex = last7Days.indexOf(orderDate);
 
       if (dayIndex !== -1) {
-        salesData[dayIndex].today += parseFloat(order.total) || 0;
+        const orderTotal =
+          parseFloat(order.total) || parseFloat(order.paidAmount) || 0;
+        console.log(
+          `Adding order ${order.id} total: ${orderTotal} for date: ${orderDate}`
+        );
+        salesData[dayIndex].today += orderTotal;
       }
     });
 
@@ -216,28 +346,89 @@ export default function Dashboard() {
       salesData[i].yesterday = salesData[i - 1].today;
     }
 
+    console.log("Processed sales data:", salesData);
     return salesData;
   };
 
   const calculateStats = () => {
     const today = new Date().toISOString().split("T")[0];
+    console.log("\n=== CALCULATING STATS ===");
+    console.log("Today's date:", today);
+    console.log("Selected branch filter:", selectedBranchFilter);
+    console.log("Total orders in state:", orders.length);
 
-    const todaySales = orders
-      .filter(
-        (order) =>
-          new Date(order.created_at).toISOString().split("T")[0] === today
-      )
-      .reduce((sum, order) => sum + (parseFloat(order.total) || 0), 0);
+    let filteredOrders = [...orders];
 
-    const todayTransactions = orders.filter(
-      (order) =>
-        new Date(order.created_at).toISOString().split("T")[0] === today
-    ).length;
+    if (selectedBranchFilter !== "all") {
+      filteredOrders = orders.filter(
+        (order) => (order.branch || "main") === selectedBranchFilter
+      );
+    }
 
-    const totalSales = orders.reduce(
-      (sum, order) => sum + (parseFloat(order.total) || 0),
-      0
+    console.log(
+      `Filtered orders count: ${filteredOrders.length} for branch: ${selectedBranchFilter}`
     );
+
+    if (filteredOrders.length > 0) {
+      console.log("First few filtered orders:");
+      filteredOrders.slice(0, 3).forEach((order, index) => {
+        console.log(`  Order ${index + 1}:`, {
+          id: order.id,
+          branch: order.branch || "main",
+          created_at: order.created_at,
+          total: order.total,
+          paidAmount: order.paidAmount,
+        });
+      });
+    }
+
+    const todayOrders = filteredOrders.filter((order) => {
+      if (!order.created_at) {
+        return false;
+      }
+
+      try {
+        const orderDate = new Date(order.created_at)
+          .toISOString()
+          .split("T")[0];
+        const isToday = orderDate === today;
+        return isToday;
+      } catch (error) {
+        console.error("Error parsing date for order:", order.id, error);
+        return false;
+      }
+    });
+
+    console.log("Today's orders count:", todayOrders.length);
+
+    const todaySales = todayOrders.reduce((sum, order) => {
+      const total =
+        parseFloat(order.total) ||
+        parseFloat(order.paidAmount) ||
+        parseFloat(order.amount) ||
+        0;
+      return sum + total;
+    }, 0);
+
+    const todayTransactions = todayOrders.length;
+
+    const totalSales = filteredOrders.reduce((sum, order) => {
+      const total =
+        parseFloat(order.total) ||
+        parseFloat(order.paidAmount) ||
+        parseFloat(order.amount) ||
+        0;
+      return sum + total;
+    }, 0);
+
+    console.log("Final calculated stats:", {
+      todaySales: `₱${todaySales.toFixed(2)}`,
+      todayTransactions,
+      totalSales: `₱${totalSales.toFixed(2)}`,
+      filteredOrdersCount: filteredOrders.length,
+      todayOrdersCount: todayOrders.length,
+    });
+    console.log("=== END STATS CALCULATION ===\n");
 
     return {
       todaySales,
@@ -282,7 +473,8 @@ export default function Dashboard() {
       return;
     }
 
-    setUser(JSON.parse(userData));
+    const parsedUser = JSON.parse(userData);
+    setUser(parsedUser);
 
     if (!storedTimeIn) {
       const now = new Date().toISOString();
@@ -296,6 +488,46 @@ export default function Dashboard() {
     fetchAnnouncements();
     fetchOrders();
   }, [navigate]);
+
+  useEffect(() => {
+    if (user) {
+      fetchAnnouncements();
+      fetchOrders();
+      fetchUsers();
+    }
+  }, [user]);
+
+  useEffect(() => {
+    if (user && selectedBranchFilter !== "all") {
+      console.log(
+        "Branch filter changed to:",
+        selectedBranchFilter,
+        "fetching orders..."
+      );
+      const timer = setTimeout(() => {
+        fetchOrders();
+      }, 300);
+
+      return () => clearTimeout(timer);
+    }
+  }, [selectedBranchFilter, user]);
+
+  useEffect(() => {
+    if (user) {
+      console.log("Branch filter changed, fetching announcements...");
+      fetchAnnouncements();
+    }
+  }, [selectedBranchFilter, user]);
+
+  useEffect(() => {
+    if (orders.length > 0) {
+      console.log("Orders updated, recalculating stats...");
+      console.log("Current branch filter:", selectedBranchFilter);
+
+      const stats = calculateStats();
+      console.log("Recalculated stats:", stats);
+    }
+  }, [selectedBranchFilter, orders]);
 
   const handleLogout = () => {
     localStorage.removeItem("user");
@@ -311,11 +543,10 @@ export default function Dashboard() {
   const handleAddAnnouncement = async () => {
     if (newAnnouncement.title && newAnnouncement.message) {
       try {
+        const headers = getAuthHeaders();
         const response = await fetch("http://localhost:3002/announcements", {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
+          headers: headers,
           body: JSON.stringify({
             title: newAnnouncement.title,
             content: newAnnouncement.message,
@@ -328,9 +559,20 @@ export default function Dashboard() {
 
         if (data.success || data.announcementId) {
           fetchAnnouncements();
-          setNewAnnouncement({ title: "", message: "", type: "info" });
+          setNewAnnouncement({
+            title: "",
+            message: "",
+            type: "info",
+          });
           setShowAnnouncementModal(false);
-          alert("Announcement posted successfully!");
+
+          if (user?.role === "admin" || user?.role === "owner") {
+            alert(
+              "Global announcement posted successfully! Visible to ALL branches."
+            );
+          } else {
+            alert("Announcement posted successfully to your branch!");
+          }
         } else {
           alert(data.message || "Failed to post announcement");
         }
@@ -342,7 +584,13 @@ export default function Dashboard() {
   };
 
   const handleAddUser = async () => {
-    if (newUser.email && newUser.password && newUser.confirmPassword) {
+    if (
+      newUser.email &&
+      newUser.username &&
+      newUser.password &&
+      newUser.confirmPassword &&
+      newUser.branch
+    ) {
       if (newUser.password !== newUser.confirmPassword) {
         alert("Passwords do not match!");
         return;
@@ -354,17 +602,18 @@ export default function Dashboard() {
       }
 
       try {
+        const headers = getAuthHeaders();
         const response = await fetch("http://localhost:3002/register", {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
+          headers: headers,
           body: JSON.stringify({
             email: newUser.email,
+            username: newUser.username,
             password: newUser.password,
             confirmPassword: newUser.confirmPassword,
             role: newUser.role,
             status: newUser.status,
+            branch: newUser.branch,
           }),
         });
 
@@ -374,10 +623,12 @@ export default function Dashboard() {
           fetchUsers();
           setNewUser({
             email: "",
+            username: "",
             password: "",
             confirmPassword: "",
             role: "cashier",
             status: "Active",
+            branch: "main",
           });
           setShowAddUserModal(false);
           alert("User added successfully!");
@@ -388,28 +639,40 @@ export default function Dashboard() {
         console.error("Error adding user:", error);
         alert("Error adding user. Please try again.");
       }
+    } else {
+      alert("Please fill all fields including branch!");
     }
   };
 
   const handleEditEmployee = (employee) => {
-    setSelectedEmployee(employee);
+    // Kung hindi admin/owner, huwag payagan mag-edit
+    if (user?.role !== "admin" && user?.role !== "owner") {
+      alert("You don't have permission to edit users.");
+      return;
+    }
+
+    setSelectedEmployee({
+      ...employee,
+      username: employee.username || "",
+    });
     setShowEditModal(true);
   };
 
   const handleUpdateEmployee = async () => {
     if (selectedEmployee) {
       try {
+        const headers = getAuthHeaders();
         const response = await fetch(
           `http://localhost:3002/users/${selectedEmployee.id}`,
           {
             method: "PUT",
-            headers: {
-              "Content-Type": "application/json",
-            },
+            headers: headers,
             body: JSON.stringify({
               email: selectedEmployee.email,
+              username: selectedEmployee.username || "",
               role: selectedEmployee.role,
               status: selectedEmployee.status,
+              branch: selectedEmployee.branch,
             }),
           }
         );
@@ -417,7 +680,7 @@ export default function Dashboard() {
         const data = await response.json();
 
         if (data.success) {
-          fetchUsers(); // Refresh the list
+          fetchUsers();
           setShowEditModal(false);
           setSelectedEmployee(null);
           alert("User updated successfully!");
@@ -432,6 +695,12 @@ export default function Dashboard() {
   };
 
   const handleDeleteEmployee = (employee) => {
+    // Kung hindi admin/owner, huwag payagan mag-delete
+    if (user?.role !== "admin" && user?.role !== "owner") {
+      alert("You don't have permission to delete users.");
+      return;
+    }
+
     setSelectedEmployee(employee);
     setShowDeleteModal(true);
   };
@@ -439,17 +708,19 @@ export default function Dashboard() {
   const confirmDeleteEmployee = async () => {
     if (selectedEmployee) {
       try {
+        const headers = getAuthHeaders();
         const response = await fetch(
           `http://localhost:3002/users/${selectedEmployee.id}`,
           {
             method: "DELETE",
+            headers: headers,
           }
         );
 
         const data = await response.json();
 
         if (data.success) {
-          fetchUsers(); // Refresh the list
+          fetchUsers();
           setShowDeleteModal(false);
           setSelectedEmployee(null);
           alert("User deleted successfully!");
@@ -513,7 +784,7 @@ export default function Dashboard() {
   const getRoleDisplayName = (role) => {
     switch (role) {
       case "admin":
-        return "Administrator";
+        return "Owner";
       case "manager":
         return "Manager";
       case "cashier":
@@ -542,7 +813,6 @@ export default function Dashboard() {
         onLogout={handleLogout}
         showWelcome={true}
       />
-
       <main className="py-6 px-4 sm:px-6 lg:px-8">
         {activeView === "dashboard" ? (
           <div className="max-w-7xl mx-auto">
@@ -552,29 +822,126 @@ export default function Dashboard() {
               style={{ backgroundColor: "#F64E60" }}
             >
               <h1 className="text-2xl font-bold text-white">
-                Welcome, {user?.email || "User"}!
+                Welcome, {user?.username || user?.email || "User"}!
               </h1>
               <p className="text-blue-100 mt-1">
                 Here's what's happening with your business today.
               </p>
+              {user?.branch && (
+                <div className="mt-2 flex items-center gap-2">
+                  <Building size={16} className="text-blue-200" />
+                  <span className="text-blue-200 text-sm">
+                    Branch: {user.branch}
+                  </span>
+                </div>
+              )}
             </div>
 
-            {/* Header */}
+            {/* Header with Branch Filter Dropdown */}
             <div className="mb-6 flex justify-between items-center">
-              <h1 className="text-2xl font-bold text-gray-800">
-              
-              </h1>
-              <div className="flex gap-2">
+              <h1 className="text-2xl font-bold text-gray-800"></h1>
+              <div className="flex gap-2 items-center">
+                {(user?.role === "admin" || user?.role === "owner") && (
+                  <div className="relative">
+                    <button
+                      onClick={() => {
+                        const dropdown =
+                          document.getElementById("branchDropdown");
+                        dropdown.classList.toggle("hidden");
+                      }}
+                      className="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 flex items-center gap-2 shadow-sm transition-all hover:shadow"
+                    >
+                      <Filter size={16} />
+                      {selectedBranchFilter === "all"
+                        ? "All Branches"
+                        : selectedBranchFilter}
+                      <ChevronDown size={16} className="transition-transform" />
+                    </button>
+
+                    <div
+                      id="branchDropdown"
+                      className="absolute right-0 mt-2 w-48 bg-white rounded-xl shadow-lg border border-gray-200 z-50 hidden"
+                    >
+                      <div className="py-2">
+                        <button
+                          onClick={() => {
+                            setSelectedBranchFilter("all");
+                            document
+                              .getElementById("branchDropdown")
+                              .classList.add("hidden");
+                            setTimeout(() => {
+                              fetchOrders();
+                            }, 100);
+                          }}
+                          className={`w-full px-4 py-2.5 text-left text-sm flex items-center gap-2 hover:bg-gray-50 transition-colors ${
+                            selectedBranchFilter === "all"
+                              ? "bg-red-50 text-red-600 font-medium"
+                              : "text-gray-700"
+                          }`}
+                        >
+                          <Building size={14} />
+                          All Branches
+                          {selectedBranchFilter === "all" && (
+                            <span className="ml-auto text-red-500">✓</span>
+                          )}
+                        </button>
+
+                        <div className="border-t border-gray-100 my-1"></div>
+
+                        {branches.map((branch) => (
+                          <button
+                            key={branch}
+                            onClick={() => {
+                              setSelectedBranchFilter(branch);
+                              document
+                                .getElementById("branchDropdown")
+                                .classList.add("hidden");
+                              setTimeout(() => {
+                                fetchOrders();
+                              }, 100);
+                            }}
+                            className={`w-full px-4 py-2.5 text-left text-sm flex items-center gap-2 hover:bg-gray-50 transition-colors ${
+                              selectedBranchFilter === branch
+                                ? "bg-red-50 text-red-600 font-medium"
+                                : "text-gray-700"
+                            }`}
+                          >
+                            <Building size={14} className="text-gray-400" />
+                            {branch}
+                            {selectedBranchFilter === branch && (
+                              <span className="ml-auto text-red-500">✓</span>
+                            )}
+                          </button>
+                        ))}
+
+                        {branches.length === 0 && (
+                          <div className="px-4 py-3 text-sm text-gray-500">
+                            No branches found
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 <button
-                  onClick={fetchOrders}
-                  disabled={ordersLoading}
+                  onClick={() => {
+                    fetchOrders();
+                    fetchUsers();
+                    fetchAnnouncements();
+                  }}
+                  disabled={ordersLoading || loading || announcementsLoading}
                   className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium rounded-lg shadow-sm transition-all flex items-center gap-2"
                 >
                   <RefreshCw
                     size={18}
-                    className={ordersLoading ? "animate-spin" : ""}
+                    className={
+                      ordersLoading || loading || announcementsLoading
+                        ? "animate-spin"
+                        : ""
+                    }
                   />
-                  Refresh
+                  Refresh All
                 </button>
                 <button className="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 flex items-center gap-2 shadow-sm transition-all hover:shadow">
                   <Package size={16} />
@@ -583,43 +950,80 @@ export default function Dashboard() {
               </div>
             </div>
 
-            {/* Stats Cards - UPDATED: 3 cards na lang */}
+            {/* Stats Cards */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
-              {/* Total Sales */}
               <div className="bg-gradient-to-br from-pink-50 to-pink-100 rounded-xl p-6 border border-pink-200 transform transition-all hover:scale-105 hover:shadow-lg">
                 <div className="flex items-center justify-between mb-4">
                   <div className="w-12 h-12 bg-pink-200 rounded-lg flex items-center justify-center">
                     <DollarSign className="text-pink-600" size={24} />
                   </div>
+                  {(user?.role === "admin" || user?.role === "owner") &&
+                    selectedBranchFilter !== "all" && (
+                      <span className="text-xs bg-white px-2 py-1 rounded-full font-medium text-pink-600 border border-pink-300">
+                        {selectedBranchFilter}
+                      </span>
+                    )}
                 </div>
-                <div className="text-3xl font-bold text-gray-800 mb-1">
-                  ₱{stats.totalSales.toFixed(2)}
-                </div>
-                <div className="text-sm text-gray-600 mb-2">Gross Sales</div>
-                <div className="text-xs text-pink-600 font-medium">
-                  All time revenue
-                </div>
+                {ordersLoading ? (
+                  <div className="flex items-center justify-center">
+                    <RefreshCw
+                      size={20}
+                      className="animate-spin text-pink-600"
+                    />
+                    <span className="ml-2 text-gray-600">Loading...</span>
+                  </div>
+                ) : (
+                  <>
+                    <div className="text-3xl font-bold text-gray-800 mb-1">
+                      ₱{stats.totalSales.toFixed(2)}
+                    </div>
+                    <div className="text-sm text-gray-600 mb-2">
+                      Gross Sales
+                    </div>
+                    <div className="text-xs text-pink-600 font-medium">
+                      {selectedBranchFilter === "all"
+                        ? "All branches"
+                        : selectedBranchFilter}
+                    </div>
+                  </>
+                )}
               </div>
 
-              {/* Today's Sales */}
               <div className="bg-gradient-to-br from-orange-50 to-orange-100 rounded-xl p-6 border border-orange-200 transform transition-all hover:scale-105 hover:shadow-lg">
                 <div className="flex items-center justify-between mb-4">
                   <div className="w-12 h-12 bg-orange-200 rounded-lg flex items-center justify-center">
                     <ShoppingBag className="text-orange-600" size={24} />
                   </div>
+                  {(user?.role === "admin" || user?.role === "owner") &&
+                    selectedBranchFilter !== "all" && (
+                      <span className="text-xs bg-white px-2 py-1 rounded-full font-medium text-orange-600 border border-orange-300">
+                        {selectedBranchFilter}
+                      </span>
+                    )}
                 </div>
-                <div className="text-3xl font-bold text-gray-800 mb-1">
-                  {stats.todayTransactions}
-                </div>
-                <div className="text-sm text-gray-600 mb-2">
-                  Today Transactions
-                </div>
-                <div className="text- text-orange-600 font-medium">
-                  ₱{stats.todaySales.toFixed(2)} today
-                </div>
+                {ordersLoading ? (
+                  <div className="flex items-center justify-center">
+                    <RefreshCw
+                      size={20}
+                      className="animate-spin text-orange-600"
+                    />
+                    <span className="ml-2 text-gray-600">Loading...</span>
+                  </div>
+                ) : (
+                  <>
+                    <div className="text-3xl font-bold text-gray-800 mb-1">
+                      {stats.todayTransactions}
+                    </div>
+                    <div className="text-sm text-gray-600 mb-2">
+                      Today Transactions
+                    </div>
+                    <div className="text-xs text-orange-600 font-medium">
+                      ₱{stats.todaySales.toFixed(2)} today
+                    </div>
+                  </>
+                )}
               </div>
 
-              {/* Active Employees */}
               <div className="bg-gradient-to-br from-purple-50 to-purple-100 rounded-xl p-6 border border-purple-200 transform transition-all hover:scale-105 hover:shadow-lg">
                 <div className="flex items-center justify-between mb-4">
                   <div className="w-12 h-12 bg-purple-200 rounded-lg flex items-center justify-center">
@@ -638,9 +1042,8 @@ export default function Dashboard() {
               </div>
             </div>
 
-            {/* Main Grid - UPDATED: Announcements lang ang natira */}
+            {/* Main Grid */}
             <div className="grid grid-cols-1 lg:grid-cols-1 gap-6 mb-6">
-              {/* Announcements - Full width na */}
               <div className="bg-white rounded-xl shadow-lg p-6 border border-gray-100">
                 <div className="flex justify-between items-center mb-4">
                   <div className="flex items-center gap-2">
@@ -689,11 +1092,19 @@ export default function Dashboard() {
                     announcements.map((announcement) => (
                       <div
                         key={announcement.id}
-                        className={`bg-${announcement.color}-50 border border-${announcement.color}-200 rounded-lg p-4 hover:shadow-md transition-all transform hover:-translate-y-0.5`}
+                        className={`${
+                          announcement.is_global
+                            ? "bg-gradient-to-r from-purple-50 to-pink-50 border-2 border-purple-300"
+                            : `bg-${announcement.color}-50 border border-${announcement.color}-200`
+                        } rounded-lg p-4 hover:shadow-md transition-all transform hover:-translate-y-0.5`}
                       >
                         <div className="flex items-start gap-3">
                           <div
-                            className={`w-10 h-10 bg-gradient-to-br from-${announcement.color}-400 to-${announcement.color}-600 rounded-lg flex items-center justify-center flex-shrink-0 shadow-sm`}
+                            className={`w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 shadow-sm ${
+                              announcement.is_global
+                                ? "bg-gradient-to-br from-purple-500 to-pink-500"
+                                : `bg-gradient-to-br from-${announcement.color}-400 to-${announcement.color}-600`
+                            }`}
                           >
                             <announcement.icon
                               className="text-white"
@@ -701,15 +1112,35 @@ export default function Dashboard() {
                             />
                           </div>
                           <div className="flex-1 min-w-0">
-                            <h4 className="font-semibold text-gray-800 text-sm mb-1">
-                              {announcement.title}
-                            </h4>
+                            <div className="flex justify-between items-start">
+                              <div className="flex items-center gap-2">
+                                <h4 className="font-semibold text-gray-800 text-sm mb-1">
+                                  {announcement.title}
+                                </h4>
+                                {announcement.is_global && (
+                                  <span className="text-xs bg-gradient-to-r from-purple-500 to-pink-500 text-white px-2 py-1 rounded-full font-bold">
+                                    GLOBAL
+                                  </span>
+                                )}
+                              </div>
+                              {announcement.branch &&
+                                !announcement.is_global && (
+                                  <span className="text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded-full">
+                                    {announcement.branch}
+                                  </span>
+                                )}
+                            </div>
                             <p className="text-xs text-gray-600 mb-2 line-clamp-2">
                               {announcement.message}
                             </p>
-                            <span className="text-xs text-gray-500 font-medium">
-                              {announcement.time}
-                            </span>
+                            <div className="flex justify-between items-center">
+                              <span className="text-xs text-gray-500 font-medium">
+                                {announcement.time}
+                              </span>
+                              <span className="text-xs text-gray-500">
+                                by {announcement.author}
+                              </span>
+                            </div>
                           </div>
                         </div>
                       </div>
@@ -737,13 +1168,17 @@ export default function Dashboard() {
                     />
                     Refresh
                   </button>
-                  <button
-                    onClick={() => setShowAddUserModal(true)}
-                    className="px-4 py-2 bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white font-medium rounded-lg shadow-md hover:shadow-lg transition-all transform hover:scale-105 flex items-center gap-2"
-                  >
-                    <UserPlus size={18} />
-                    Add User
-                  </button>
+
+                  {/* "Add User" button - visible only to admin/owner */}
+                  {(user?.role === "admin" || user?.role === "owner") && (
+                    <button
+                      onClick={() => setShowAddUserModal(true)}
+                      className="px-4 py-2 bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white font-medium rounded-lg shadow-md hover:shadow-lg transition-all transform hover:scale-105 flex items-center gap-2"
+                    >
+                      <UserPlus size={18} />
+                      Add User
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -764,7 +1199,13 @@ export default function Dashboard() {
                           Email
                         </th>
                         <th className="text-left py-3 px-4 text-sm font-semibold text-gray-700">
+                          Username
+                        </th>
+                        <th className="text-left py-3 px-4 text-sm font-semibold text-gray-700">
                           Role
+                        </th>
+                        <th className="text-left py-3 px-4 text-sm font-semibold text-gray-700">
+                          Branch
                         </th>
                         <th className="text-left py-3 px-4 text-sm font-semibold text-gray-700">
                           Account Created
@@ -774,14 +1215,20 @@ export default function Dashboard() {
                         </th>
                         <th className="text-left py-3 px-4 text-sm font-semibold text-gray-700">
                           Actions
+                          {user?.role !== "admin" && user?.role !== "owner" && (
+                            <span className="text-xs font-normal text-gray-500 ml-2">
+                              (Read only)
+                            </span>
+                          )}
                         </th>
                       </tr>
                     </thead>
+
                     <tbody>
                       {employees.length === 0 ? (
                         <tr>
                           <td
-                            colSpan="6"
+                            colSpan="8"
                             className="py-8 text-center text-gray-500"
                           >
                             No users found
@@ -806,6 +1253,15 @@ export default function Dashboard() {
                               </div>
                             </td>
                             <td className="py-4 px-4">
+                              <div className="flex items-center gap-3">
+                                <div>
+                                  <span className="text-sm font-medium text-gray-800 block">
+                                    {employee.username}
+                                  </span>
+                                </div>
+                              </div>
+                            </td>
+                            <td className="py-4 px-4">
                               <span
                                 className={`inline-flex items-center px-3 py-1.5 rounded-full text-xs font-semibold shadow-sm ${
                                   employee.role === "admin"
@@ -819,6 +1275,12 @@ export default function Dashboard() {
                                   {getRoleIcon(employee.role)}
                                   {getRoleDisplayName(employee.role)}
                                 </div>
+                              </span>
+                            </td>
+                            <td className="py-4 px-4">
+                              <span className="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-semibold bg-gray-100 text-gray-700 border border-gray-200 shadow-sm">
+                                <Building size={12} className="mr-1" />
+                                {employee.branch || "main"}
                               </span>
                             </td>
                             <td className="py-4 px-4 text-sm text-gray-600">
@@ -848,20 +1310,34 @@ export default function Dashboard() {
                             </td>
                             <td className="py-4 px-4">
                               <div className="flex items-center gap-2">
-                                <button
-                                  onClick={() => handleEditEmployee(employee)}
-                                  className="p-2 bg-blue-50 hover:bg-blue-100 text-blue-600 rounded-lg transition-colors"
-                                  title="Edit User"
-                                >
-                                  <Edit size={16} />
-                                </button>
-                                <button
-                                  onClick={() => handleDeleteEmployee(employee)}
-                                  className="p-2 bg-red-50 hover:bg-red-100 text-red-600 rounded-lg transition-colors"
-                                  title="Delete User"
-                                >
-                                  <Trash2 size={16} />
-                                </button>
+                                {/* Show Edit/Delete buttons only for admin/owner */}
+                                {user?.role === "admin" ||
+                                user?.role === "owner" ? (
+                                  <>
+                                    <button
+                                      onClick={() =>
+                                        handleEditEmployee(employee)
+                                      }
+                                      className="p-2 bg-blue-50 hover:bg-blue-100 text-blue-600 rounded-lg transition-colors"
+                                      title="Edit User"
+                                    >
+                                      <Edit size={16} />
+                                    </button>
+                                    <button
+                                      onClick={() =>
+                                        handleDeleteEmployee(employee)
+                                      }
+                                      className="p-2 bg-red-50 hover:bg-red-100 text-red-600 rounded-lg transition-colors"
+                                      title="Delete User"
+                                    >
+                                      <Trash2 size={16} />
+                                    </button>
+                                  </>
+                                ) : (
+                                  <span className="text-xs text-gray-500 italic px-3 py-1.5 bg-gray-100 rounded-full">
+                                    View only
+                                  </span>
+                                )}
                               </div>
                             </td>
                           </tr>
@@ -874,7 +1350,27 @@ export default function Dashboard() {
             </div>
           </div>
         ) : activeView === "pos" ? (
-          <FoodHubPOS />
+          user?.role !== "admin" && user?.role !== "owner" ? (
+            <FoodHubPOS />
+          ) : (
+            <div className="max-w-7xl mx-auto">
+              <div className="text-center py-12">
+                <h2 className="text-2xl font-bold text-red-600 mb-4">
+                  Access Restricted
+                </h2>
+                <p className="text-gray-600">
+                  Owner/Admin accounts cannot access POS. Please use a Cashier
+                  or Manager account.
+                </p>
+                <button
+                  onClick={() => setActiveView("dashboard")}
+                  className="mt-4 px-6 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600"
+                >
+                  Return to Dashboard
+                </button>
+              </div>
+            </div>
+          )
         ) : activeView === "sales" ? (
           <Sales />
         ) : activeView === "Items" ? (
@@ -955,6 +1451,26 @@ export default function Dashboard() {
                 ></textarea>
               </div>
 
+              {user?.role === "admin" || user?.role === "owner" ? (
+                <div className="bg-gradient-to-r from-purple-50 to-pink-50 p-3 rounded-lg border-2 border-purple-300">
+                  <p className="text-sm text-purple-700 font-bold">
+                    <span className="font-extrabold">GLOBAL ANNOUNCEMENT</span>{" "}
+                    - This will be visible to ALL branches automatically
+                  </p>
+                  <p className="text-xs text-purple-600 mt-1">
+                    (As Owner/Admin, your posts are automatically global)
+                  </p>
+                </div>
+              ) : (
+                <div className="bg-blue-50 p-3 rounded-lg">
+                  <p className="text-sm text-blue-700 font-medium">
+                    This announcement will be posted to:{" "}
+                    <span className="font-bold">{user?.branch}</span> branch
+                    only
+                  </p>
+                </div>
+              )}
+
               <div className="flex gap-3 pt-2">
                 <button
                   onClick={() => setShowAnnouncementModal(false)}
@@ -974,226 +1490,367 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Add User Modal */}
-      {showAddUserModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 transform transition-all">
-            <div className="flex justify-between items-center mb-6">
-              <h2 className="text-xl font-bold text-gray-800">Add New User</h2>
-              <button
-                onClick={() => setShowAddUserModal(false)}
-                className="w-8 h-8 bg-gray-100 hover:bg-gray-200 rounded-lg flex items-center justify-center transition-colors"
-              >
-                <X size={18} className="text-gray-600" />
-              </button>
-            </div>
-
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">
-                  Email Address
-                </label>
-                <input
-                  type="email"
-                  value={newUser.email}
-                  onChange={(e) =>
-                    setNewUser({
-                      ...newUser,
-                      email: e.target.value,
-                    })
-                  }
-                  placeholder="Enter email address"
-                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent outline-none transition-all"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">
-                  Password
-                </label>
-                <input
-                  type="password"
-                  value={newUser.password}
-                  onChange={(e) =>
-                    setNewUser({
-                      ...newUser,
-                      password: e.target.value,
-                    })
-                  }
-                  placeholder="Enter password (min. 6 characters)"
-                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent outline-none transition-all"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">
-                  Confirm Password
-                </label>
-                <input
-                  type="password"
-                  value={newUser.confirmPassword}
-                  onChange={(e) =>
-                    setNewUser({
-                      ...newUser,
-                      confirmPassword: e.target.value,
-                    })
-                  }
-                  placeholder="Confirm password"
-                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent outline-none transition-all"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">
-                  Role
-                </label>
-                <select
-                  value={newUser.role}
-                  onChange={(e) =>
-                    setNewUser({
-                      ...newUser,
-                      role: e.target.value,
-                    })
-                  }
-                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent outline-none transition-all"
-                >
-                  <option value="cashier">Cashier</option>
-                  <option value="manager">Manager</option>
-                  <option value="admin">Administrator</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">
-                  Status
-                </label>
-                <select
-                  value={newUser.status}
-                  onChange={(e) =>
-                    setNewUser({
-                      ...newUser,
-                      status: e.target.value,
-                    })
-                  }
-                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-red focus:border-transparent outline-none transition-all"
-                >
-                  <option value="Active">Active</option>
-                  <option value="Inactive">Inactive</option>
-                </select>
-              </div>
-
-              <div className="flex gap-3 pt-2">
+      {/* Add User Modal - Only accessible to admin/owner */}
+      {showAddUserModal &&
+        (user?.role === "admin" || user?.role === "owner") && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 transform transition-all">
+              <div className="flex justify-between items-center mb-6">
+                <h2 className="text-xl font-bold text-gray-800">
+                  Add New User
+                </h2>
                 <button
                   onClick={() => setShowAddUserModal(false)}
-                  className="flex-1 px-4 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium rounded-lg transition-colors"
+                  className="w-8 h-8 bg-gray-100 hover:bg-gray-200 rounded-lg flex items-center justify-center transition-colors"
                 >
-                  Cancel
+                  <X size={18} className="text-gray-600" />
                 </button>
-                <button
-                  onClick={handleAddUser}
-                  className="flex-1 px-4 py-2.5 bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white font-medium rounded-lg shadow-md hover:shadow-lg transition-all transform hover:scale-105"
-                >
-                  Add User
-                </button>
+              </div>
+
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">
+                    Email Address
+                  </label>
+                  <input
+                    type="email"
+                    value={newUser.email}
+                    onChange={(e) =>
+                      setNewUser({
+                        ...newUser,
+                        email: e.target.value,
+                      })
+                    }
+                    placeholder="Enter email address"
+                    className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent outline-none transition-all"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">
+                    Username
+                  </label>
+                  <input
+                    type="text"
+                    value={newUser.username}
+                    onChange={(e) =>
+                      setNewUser({
+                        ...newUser,
+                        username: e.target.value,
+                      })
+                    }
+                    placeholder="Enter username"
+                    className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent outline-none transition-all"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">
+                    Password
+                  </label>
+                  <input
+                    type="password"
+                    value={newUser.password}
+                    onChange={(e) =>
+                      setNewUser({
+                        ...newUser,
+                        password: e.target.value,
+                      })
+                    }
+                    placeholder="Enter password (min. 6 characters)"
+                    className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent outline-none transition-all"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">
+                    Confirm Password
+                  </label>
+                  <input
+                    type="password"
+                    value={newUser.confirmPassword}
+                    onChange={(e) =>
+                      setNewUser({
+                        ...newUser,
+                        confirmPassword: e.target.value,
+                      })
+                    }
+                    placeholder="Confirm password"
+                    className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent outline-none transition-all"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">
+                    Role
+                  </label>
+                  <select
+                    value={newUser.role}
+                    onChange={(e) =>
+                      setNewUser({
+                        ...newUser,
+                        role: e.target.value,
+                      })
+                    }
+                    className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent outline-none transition-all"
+                  >
+                    <option value="cashier">Cashier</option>
+                    <option value="manager">Manager</option>
+                    <option value="admin">Owner</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">
+                    Branch Name
+                  </label>
+                  <input
+                    type="text"
+                    value={newUser.branch}
+                    onChange={(e) =>
+                      setNewUser({
+                        ...newUser,
+                        branch: e.target.value,
+                      })
+                    }
+                    placeholder="Enter branch name (e.g., Main, Branch1, Branch2)"
+                    className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent outline-none transition-all"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">
+                    Status
+                  </label>
+                  <select
+                    value={newUser.status}
+                    onChange={(e) =>
+                      setNewUser({
+                        ...newUser,
+                        status: e.target.value,
+                      })
+                    }
+                    className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent outline-none transition-all"
+                  >
+                    <option value="Active">Active</option>
+                    <option value="Inactive">Inactive</option>
+                  </select>
+                </div>
+
+                <div className="flex gap-3 pt-2">
+                  <button
+                    onClick={() => setShowAddUserModal(false)}
+                    className="flex-1 px-4 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium rounded-lg transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleAddUser}
+                    className="flex-1 px-4 py-2.5 bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white font-medium rounded-lg shadow-md hover:shadow-lg transition-all transform hover:scale-105"
+                  >
+                    Add User
+                  </button>
+                </div>
               </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {/* Edit Employee Modal */}
-      {showEditModal && selectedEmployee && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 transform transition-all">
-            <div className="flex justify-between items-center mb-6">
-              <h2 className="text-xl font-bold text-gray-800">Edit User</h2>
-              <button
-                onClick={() => {
-                  setShowEditModal(false);
-                  setSelectedEmployee(null);
-                }}
-                className="w-8 h-8 bg-gray-100 hover:bg-gray-200 rounded-lg flex items-center justify-center transition-colors"
-              >
-                <X size={18} className="text-gray-600" />
-              </button>
-            </div>
-
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">
-                  Email Address
-                </label>
-                <input
-                  type="email"
-                  value={selectedEmployee.email}
-                  onChange={(e) =>
-                    setSelectedEmployee({
-                      ...selectedEmployee,
-                      email: e.target.value,
-                    })
-                  }
-                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">
-                  Role
-                </label>
-                <select
-                  value={selectedEmployee.role}
-                  onChange={(e) =>
-                    setSelectedEmployee({
-                      ...selectedEmployee,
-                      role: e.target.value,
-                    })
-                  }
-                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all"
-                >
-                  <option value="cashier">Cashier</option>
-                  <option value="manager">Manager</option>
-                  <option value="admin">Administrator</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">
-                  Status
-                </label>
-                <select
-                  value={selectedEmployee.status}
-                  onChange={(e) =>
-                    setSelectedEmployee({
-                      ...selectedEmployee,
-                      status: e.target.value,
-                    })
-                  }
-                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all"
-                >
-                  <option value="Active">Active</option>
-                  <option value="Inactive">Inactive</option>
-                </select>
-              </div>
-
-              <div className="bg-gray-50 p-4 rounded-lg">
-                <h4 className="text-sm font-semibold text-gray-700 mb-2">
-                  Account Information
-                </h4>
-                <div className="text-sm text-gray-600 space-y-1">
-                  <p>
-                    <strong>ID:</strong> {selectedEmployee.id}
-                  </p>
-                  <p>
-                    <strong>Created:</strong>{" "}
-                    {formatDate(selectedEmployee.created_at)}
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex gap-3 pt-2">
+      {/* Edit Employee Modal - Only accessible to admin/owner */}
+      {showEditModal &&
+        selectedEmployee &&
+        (user?.role === "admin" || user?.role === "owner") && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 transform transition-all">
+              <div className="flex justify-between items-center mb-6">
+                <h2 className="text-xl font-bold text-gray-800">Edit User</h2>
                 <button
                   onClick={() => {
                     setShowEditModal(false);
+                    setSelectedEmployee(null);
+                  }}
+                  className="w-8 h-8 bg-gray-100 hover:bg-gray-200 rounded-lg flex items-center justify-center transition-colors"
+                >
+                  <X size={18} className="text-gray-600" />
+                </button>
+              </div>
+
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">
+                    Username
+                  </label>
+                  <input
+                    type="text"
+                    value={selectedEmployee.username || ""}
+                    onChange={(e) =>
+                      setSelectedEmployee({
+                        ...selectedEmployee,
+                        username: e.target.value,
+                      })
+                    }
+                    placeholder="Enter username"
+                    className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    This will be displayed in the welcome message
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">
+                    Email Address
+                  </label>
+                  <input
+                    type="email"
+                    value={selectedEmployee.email}
+                    onChange={(e) =>
+                      setSelectedEmployee({
+                        ...selectedEmployee,
+                        email: e.target.value,
+                      })
+                    }
+                    className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">
+                    Role
+                  </label>
+                  <select
+                    value={selectedEmployee.role}
+                    onChange={(e) =>
+                      setSelectedEmployee({
+                        ...selectedEmployee,
+                        role: e.target.value,
+                      })
+                    }
+                    className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all"
+                  >
+                    <option value="cashier">Cashier</option>
+                    <option value="manager">Manager</option>
+                    <option value="admin">Owner</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">
+                    Branch Name
+                  </label>
+                  <input
+                    type="text"
+                    value={selectedEmployee.branch || "main"}
+                    onChange={(e) =>
+                      setSelectedEmployee({
+                        ...selectedEmployee,
+                        branch: e.target.value,
+                      })
+                    }
+                    placeholder="Enter branch name"
+                    className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">
+                    Status
+                  </label>
+                  <select
+                    value={selectedEmployee.status}
+                    onChange={(e) =>
+                      setSelectedEmployee({
+                        ...selectedEmployee,
+                        status: e.target.value,
+                      })
+                    }
+                    className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all"
+                  >
+                    <option value="Active">Active</option>
+                    <option value="Inactive">Inactive</option>
+                  </select>
+                </div>
+
+                <div className="bg-gray-50 p-4 rounded-lg">
+                  <h4 className="text-sm font-semibold text-gray-700 mb-2">
+                    Account Information
+                  </h4>
+                  <div className="text-sm text-gray-600 space-y-1">
+                    <p>
+                      <strong>ID:</strong> {selectedEmployee.id}
+                    </p>
+                    <p>
+                      <strong>Created:</strong>{" "}
+                      {formatDate(selectedEmployee.created_at)}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex gap-3 pt-2">
+                  <button
+                    onClick={() => {
+                      setShowEditModal(false);
+                      setSelectedEmployee(null);
+                    }}
+                    className="flex-1 px-4 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium rounded-lg transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleUpdateEmployee}
+                    className="flex-1 px-4 py-2.5 bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white font-medium rounded-lg shadow-md hover:shadow-lg transition-all transform hover:scale-105"
+                  >
+                    Update
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+      {/* Delete Confirmation Modal - Only accessible to admin/owner */}
+      {showDeleteModal &&
+        selectedEmployee &&
+        (user?.role === "admin" || user?.role === "owner") && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 transform transition-all">
+              <div className="flex justify-between items-center mb-6">
+                <h2 className="text-xl font-bold text-gray-800">Delete User</h2>
+                <button
+                  onClick={() => {
+                    setShowDeleteModal(false);
+                    setSelectedEmployee(null);
+                  }}
+                  className="w-8 h-8 bg-gray-100 hover:bg-gray-200 rounded-lg flex items-center justify-center transition-colors"
+                >
+                  <X size={18} className="text-gray-600" />
+                </button>
+              </div>
+
+              <div className="mb-6">
+                <div className="flex items-center justify-center w-16 h-16 bg-red-100 rounded-full mx-auto mb-4">
+                  <Trash2 className="text-red-600" size={32} />
+                </div>
+                <p className="text-center text-gray-700 mb-2">
+                  Are you sure you want to delete this user?
+                </p>
+                <p className="text-center text-sm text-gray-600">
+                  <strong>{selectedEmployee.email}</strong>
+                </p>
+                <p className="text-center text-xs text-gray-500 mt-1">
+                  Role: {getRoleDisplayName(selectedEmployee.role)}
+                </p>
+                <p className="text-center text-xs text-gray-500 mt-1">
+                  Branch: {selectedEmployee.branch || "main"}
+                </p>
+                <p className="text-center text-sm text-gray-500 mt-1">
+                  This action cannot be undone.
+                </p>
+              </div>
+
+              <div className="flex gap-3">
+                <button
+                  onClick={() => {
+                    setShowDeleteModal(false);
                     setSelectedEmployee(null);
                   }}
                   className="flex-1 px-4 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium rounded-lg transition-colors"
@@ -1201,72 +1858,15 @@ export default function Dashboard() {
                   Cancel
                 </button>
                 <button
-                  onClick={handleUpdateEmployee}
-                  className="flex-1 px-4 py-2.5 bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white font-medium rounded-lg shadow-md hover:shadow-lg transition-all transform hover:scale-105"
+                  onClick={confirmDeleteEmployee}
+                  className="flex-1 px-4 py-2.5 bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white font-medium rounded-lg shadow-md hover:shadow-lg transition-all transform hover:scale-105"
                 >
-                  Update
+                  Delete
                 </button>
               </div>
             </div>
           </div>
-        </div>
-      )}
-
-      {/* Delete Confirmation Modal */}
-      {showDeleteModal && selectedEmployee && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 transform transition-all">
-            <div className="flex justify-between items-center mb-6">
-              <h2 className="text-xl font-bold text-gray-800">Delete User</h2>
-              <button
-                onClick={() => {
-                  setShowDeleteModal(false);
-                  setSelectedEmployee(null);
-                }}
-                className="w-8 h-8 bg-gray-100 hover:bg-gray-200 rounded-lg flex items-center justify-center transition-colors"
-              >
-                <X size={18} className="text-gray-600" />
-              </button>
-            </div>
-
-            <div className="mb-6">
-              <div className="flex items-center justify-center w-16 h-16 bg-red-100 rounded-full mx-auto mb-4">
-                <Trash2 className="text-red-600" size={32} />
-              </div>
-              <p className="text-center text-gray-700 mb-2">
-                Are you sure you want to delete this user?
-              </p>
-              <p className="text-center text-sm text-gray-600">
-                <strong>{selectedEmployee.email}</strong>
-              </p>
-              <p className="text-center text-xs text-gray-500 mt-1">
-                Role: {getRoleDisplayName(selectedEmployee.role)}
-              </p>
-              <p className="text-center text-sm text-gray-500 mt-1">
-                This action cannot be undone.
-              </p>
-            </div>
-
-            <div className="flex gap-3">
-              <button
-                onClick={() => {
-                  setShowDeleteModal(false);
-                  setSelectedEmployee(null);
-                }}
-                className="flex-1 px-4 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium rounded-lg transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={confirmDeleteEmployee}
-                className="flex-1 px-4 py-2.5 bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white font-medium rounded-lg shadow-md hover:shadow-lg transition-all transform hover:scale-105"
-              >
-                Delete
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+        )}
     </div>
   );
 }

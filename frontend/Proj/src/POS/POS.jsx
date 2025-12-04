@@ -9,7 +9,7 @@ const POS = () => {
   const [activeCategory, setActiveCategory] = useState("All");
   const [searchTerm, setSearchTerm] = useState("");
   const [discountApplied, setDiscountApplied] = useState(false);
-  const [employeeDiscountApplied, setEmployeeDiscountApplied] = useState(false); // NEW STATE
+  const [employeeDiscountApplied, setEmployeeDiscountApplied] = useState(false);
 
   const [products, setProducts] = useState([]);
   const [categories, setCategories] = useState([]);
@@ -34,9 +34,10 @@ const POS = () => {
   const [selectedUpgrades, setSelectedUpgrades] = useState(null);
   const [specialInstructions, setSpecialInstructions] = useState("");
 
-  // BAGO: State para sa success modal ng store open
   const [showStoreSuccessModal, setShowStoreSuccessModal] = useState(false);
   const [storeActionTime, setStoreActionTime] = useState("");
+
+  const [currentUser, setCurrentUser] = useState(null);
 
   const receiptRef = useRef();
   const [currentTime, setCurrentTime] = useState(new Date());
@@ -49,42 +50,142 @@ const POS = () => {
     return () => clearInterval(timer);
   }, []);
 
-  // Fetch all data on component mount
+  // Get current user from localStorage
   useEffect(() => {
-    checkCurrentStoreStatus();
-    fetchProducts();
-    fetchAddons();
-    fetchUpgrades();
+    const storedUser = localStorage.getItem("user");
+    if (storedUser) {
+      const parsedUser = JSON.parse(storedUser);
+      // Extract user with proper structure
+      const user = parsedUser.user || parsedUser;
+      setCurrentUser(user);
+      console.log("Current user loaded:", {
+        id: user.id,
+        email: user.email,
+        branch: user.branch,
+      });
+    }
   }, []);
 
+  // CREATE AXIOS INSTANCE WITH HEADERS
+  const createAxiosWithHeaders = () => {
+    const instance = axios.create({
+      baseURL: "http://localhost:3002",
+    });
+
+    // Add request interceptor to include user in headers
+    instance.interceptors.request.use(
+      (config) => {
+        const storedUser = localStorage.getItem("user");
+        if (storedUser) {
+          try {
+            const parsedUser = JSON.parse(storedUser);
+            const user = parsedUser.user || parsedUser;
+
+            // Add user to headers as JSON string
+            config.headers["x-user"] = JSON.stringify({
+              id: user.id,
+              email: user.email,
+              role: user.role || "cashier",
+              branch: user.branch || "main",
+            });
+          } catch (error) {
+            console.error("Error adding user to headers:", error);
+          }
+        }
+        return config;
+      },
+      (error) => {
+        return Promise.reject(error);
+      }
+    );
+
+    return instance;
+  };
+
+  // Fetch all data when user is loaded
+  useEffect(() => {
+    if (currentUser) {
+      checkCurrentStoreStatus();
+      fetchProducts();
+      fetchAddons();
+      fetchUpgrades();
+    }
+  }, [currentUser]);
+
   const fetchProducts = async () => {
+    if (!currentUser || !currentUser.branch) {
+      console.log("No user branch found");
+      return;
+    }
+
     try {
-      const res = await axios.get("http://localhost:3002/items");
-      const productsWithNumberPrice = res.data.map((product) => ({
+      const axiosInstance = createAxiosWithHeaders();
+      const res = await axiosInstance.get("http://localhost:3002/items", {
+        params: {
+          branch: currentUser.branch,
+        },
+      });
+
+      console.log(
+        `Products for branch '${currentUser.branch}':`,
+        res.data.length
+      );
+
+      const foodItems = res.data.filter(
+        (item) => item.description_type === "k-street food"
+      );
+
+      const productsWithNumberPrice = foodItems.map((product) => ({
         ...product,
         price: Number(product.price) || 0,
       }));
+
       setProducts(productsWithNumberPrice);
-      setCategories(["All", ...new Set(res.data.map((p) => p.category))]);
+      setCategories(["All", ...new Set(foodItems.map((p) => p.category))]);
+
+      console.log(
+        `✅ Fetched products for branch '${currentUser.branch}':`,
+        productsWithNumberPrice.length
+      );
     } catch (err) {
       console.error("Failed to fetch products:", err);
     }
   };
 
-  // Fetch addons na "k-street add sides" lang
   const fetchAddons = async () => {
+    if (!currentUser || !currentUser.branch) {
+      console.log("No user branch found for addons");
+      return;
+    }
+
     try {
-      const res = await axios.get("http://localhost:3002/all-items");
-      // Filter only items with description_type = "k-street add sides"
+      const axiosInstance = createAxiosWithHeaders();
+      const res = await axiosInstance.get("http://localhost:3002/all-items", {
+        params: {
+          branch: currentUser.branch,
+        },
+      });
+
       const addonsItems = res.data.filter(
         (item) => item.description_type === "k-street add sides"
       );
       setAddons(addonsItems);
+      console.log(
+        `Addons for branch '${currentUser.branch}':`,
+        addonsItems.length
+      );
     } catch (err) {
       console.error("Failed to fetch addons:", err);
-      // Fallback: try the regular addons endpoint
       try {
-        const fallbackRes = await axios.get("http://localhost:3002/addons");
+        const axiosInstance = createAxiosWithHeaders();
+        const fallbackRes = await axiosInstance.get(
+          "http://localhost:3002/addons",
+          {
+            params: {
+              branch: currentUser.branch,
+            },
+          }
+        );
         setAddons(fallbackRes.data);
       } catch (fallbackErr) {
         console.error("Failed to fetch fallback addons:", fallbackErr);
@@ -92,33 +193,38 @@ const POS = () => {
     }
   };
 
-  // TAMA NA: "k-street Flavor" - maliit na k, malaking F
   const fetchUpgrades = async () => {
-    try {
-      const res = await axios.get("http://localhost:3002/all-items");
+    if (!currentUser || !currentUser.branch) {
+      console.log("No user branch found for upgrades");
+      return;
+    }
 
-      // Filter items
+    try {
+      const axiosInstance = createAxiosWithHeaders();
+      const res = await axiosInstance.get("http://localhost:3002/all-items", {
+        params: {
+          branch: currentUser.branch,
+        },
+      });
+
       const upgradesItems = res.data.filter(
         (item) => item.description_type === "k-street upgrades"
       );
       setUpgrades(upgradesItems);
 
-      // TAMA: "k-street Flavor" - maliit na k, malaking F
       const flavorItems = res.data.filter(
         (item) => item.description_type === "k-street Flavor"
       );
       setFlavors(flavorItems);
 
       console.log(
-        "✅ Fetched upgrades (k-street upgrades):",
+        `✅ Fetched upgrades for branch '${currentUser.branch}':`,
         upgradesItems.length
       );
-      console.log("✅ Fetched flavors (k-street Flavor):", flavorItems.length);
-
-      if (flavorItems.length === 0) {
-        console.log("⚠️ WALA TALAGANG 'k-street Flavor' items sa database!");
-        console.log("Check mo sa http://localhost:3002/all-items");
-      }
+      console.log(
+        `✅ Fetched flavors for branch '${currentUser.branch}':`,
+        flavorItems.length
+      );
     } catch (err) {
       console.error("Failed to fetch upgrades:", err);
       setUpgrades([]);
@@ -127,10 +233,27 @@ const POS = () => {
   };
 
   const checkCurrentStoreStatus = async () => {
+    if (!currentUser) {
+      console.log("No current user");
+      setStoreOpen(false);
+      return;
+    }
+
     try {
-      const res = await axios.get(
-        "http://localhost:3002/store-hours/current-store-status"
+      const userBranch = currentUser.branch || "main";
+      console.log("Checking store status for branch:", userBranch);
+
+      const axiosInstance = createAxiosWithHeaders();
+      const res = await axiosInstance.get(
+        `http://localhost:3002/store-hours/current-store-status`,
+        {
+          params: {
+            branch: userBranch,
+          },
+        }
       );
+
+      console.log("Store status response:", res.data);
       setStoreOpen(res.data.isOpen);
       if (res.data.lastAction) {
         setLastActionTime(res.data.lastAction.timestamp);
@@ -142,9 +265,23 @@ const POS = () => {
   };
 
   const handleStoreToggle = async () => {
-    const user = JSON.parse(localStorage.getItem("user"));
-    if (!user) {
+    if (!currentUser) {
       alert("Please login first");
+      return;
+    }
+
+    const userId = currentUser.id;
+    const userEmail = currentUser.email;
+    const userBranch = currentUser.branch || "main";
+
+    console.log("=== DEBUG: Extracted User Data ===");
+    console.log("User ID:", userId);
+    console.log("User Email:", userEmail);
+    console.log("User Branch:", userBranch);
+
+    if (!userId || !userEmail) {
+      console.error("Missing user ID or email:", { userId, userEmail });
+      alert("User data incomplete. Please login again.");
       return;
     }
 
@@ -152,14 +289,25 @@ const POS = () => {
     const action = newStatus ? "open" : "close";
 
     try {
-      const response = await axios.post(
+      console.log("Toggling store status:", {
+        action,
+        branch: userBranch,
+        userId,
+        userEmail,
+      });
+
+      const axiosInstance = createAxiosWithHeaders();
+      const response = await axiosInstance.post(
         "http://localhost:3002/store-hours/log-store-action",
         {
-          userId: user.id,
-          userEmail: user.email,
+          userId: userId,
+          userEmail: userEmail,
           action: action,
+          branch: userBranch,
         }
       );
+
+      console.log("Store toggle response:", response.data);
 
       setStoreOpen(newStatus);
       setLastActionTime(new Date().toISOString());
@@ -178,7 +326,6 @@ const POS = () => {
     }
   };
 
-  // Format time display
   const formatStoreTime = (timestamp) => {
     if (!timestamp) return "N/A";
 
@@ -191,7 +338,6 @@ const POS = () => {
     });
   };
 
-  // Filter products
   const filteredProducts = products.filter((product) => {
     const matchesCategory =
       activeCategory === "All" || product.category === activeCategory;
@@ -201,7 +347,6 @@ const POS = () => {
     return matchesCategory && matchesSearch;
   });
 
-  // --- Cart functions ---
   const addToCart = (product) => {
     if (!storeOpen) {
       alert(
@@ -259,7 +404,6 @@ const POS = () => {
     setSelectedUpgrades(null);
   };
 
-  // Calculate final price with upgrades
   const calculateFinalPrice = (product, addons, selectedUpgrade) => {
     let finalPrice = Number(product.price) || 0;
 
@@ -297,11 +441,10 @@ const POS = () => {
     setCart([]);
     setPaymentAmount("");
     setDiscountApplied(false);
-    setEmployeeDiscountApplied(false); // Reset employee discount
+    setEmployeeDiscountApplied(false);
     setPaymentMethod("Cash");
   };
 
-  // --- Totals ---
   const calculateSubtotal = () =>
     cart.reduce(
       (total, item) =>
@@ -318,8 +461,8 @@ const POS = () => {
   const calculateTotal = () => {
     const subtotal = calculateSubtotal();
     let total = subtotal;
-    if (discountApplied) total *= 0.8; // 20% PWD/Senior discount
-    if (employeeDiscountApplied) total *= 0.95; // 5% Employee discount
+    if (discountApplied) total *= 0.8;
+    if (employeeDiscountApplied) total *= 0.95;
     return total;
   };
 
@@ -332,6 +475,11 @@ const POS = () => {
       alert(
         "Store is currently closed. Please open the store first before processing payments."
       );
+      return;
+    }
+
+    if (!currentUser) {
+      alert("Please login first");
       return;
     }
 
@@ -365,13 +513,13 @@ const POS = () => {
     const change = amount - currentTotal;
     setChangeAmount(change);
 
-    // CREATE RECEIPT FUNCTION - GAYAHIN ANG FORMAT NG CART
     const generateReceiptText = () => {
       let receiptText = `
 K - Street Mc Arthur Highway, Magaspac,
 Gerona, Tarlac
 =============================
-Cashier: ${JSON.parse(localStorage.getItem("user"))?.email || "N/A"}
+Cashier: ${currentUser?.email || "N/A"}
+Branch: ${currentUser?.branch || "main"}
 Order Type: ${orderType}
 Payment Method: ${paymentMethod}
 Date: ${new Date().toLocaleString()}
@@ -379,9 +527,7 @@ Date: ${new Date().toLocaleString()}
 Items:
 `;
 
-      // Add cart items - GAYAHIN ANG FORMAT NG CART
       cart.forEach((item) => {
-        // Same logic as cart display
         const isFlavor =
           item.selectedUpgrade &&
           item.selectedUpgrade.description_type === "k-street Flavor";
@@ -389,7 +535,6 @@ Items:
           item.selectedUpgrade &&
           item.selectedUpgrade.description_type !== "k-street Flavor";
 
-        // Item name based on type (SAME AS CART DISPLAY)
         let itemName = item.name;
         if (isFlavor) {
           itemName = `[${item.selectedUpgrade.name} FLAVOR] ${item.name}`;
@@ -403,14 +548,12 @@ Items:
 
         receiptText += `${itemName} x${item.quantity} P${itemTotal}\n`;
 
-        // Add addons
         if (item.selectedAddons.length > 0) {
           receiptText += `Add-ons: ${item.selectedAddons
             .map((a) => `${a.name} (+P${a.price})`)
             .join(", ")}\n`;
         }
 
-        // Add upgrade or flavor note
         if (item.selectedUpgrade) {
           if (item.selectedUpgrade.description_type === "k-street Flavor") {
             receiptText += `Flavor: ${item.selectedUpgrade.name}\n`;
@@ -419,7 +562,6 @@ Items:
           }
         }
 
-        // Add special instructions
         if (item.specialInstructions) {
           receiptText += `Instructions: ${item.specialInstructions}\n`;
         }
@@ -427,11 +569,9 @@ Items:
         receiptText += "\n";
       });
 
-      // Add totals
       receiptText += `===============================\n`;
       receiptText += `Subtotal: P${currentSubtotal.toFixed(2)}\n`;
 
-      // Add discount info
       if (discountApplied) {
         receiptText += `PWD/Senior Discount (20%): Applied\n`;
       }
@@ -452,9 +592,7 @@ Items:
     const receipt = generateReceiptText();
     setReceiptContent(receipt);
 
-    // Save order to database
-    const user = JSON.parse(localStorage.getItem("user"));
-    const userId = user?.id;
+    const userId = currentUser.id;
 
     if (!userId) {
       setPaymentResult({
@@ -469,7 +607,6 @@ Items:
     try {
       const productNames = cart
         .map((item) => {
-          // SAME LOGIC FOR DATABASE
           if (item.selectedUpgrade) {
             if (item.selectedUpgrade.description_type === "k-street Flavor") {
               return `[${item.selectedUpgrade.name} FLAVOR] ${item.name}`;
@@ -504,15 +641,19 @@ Items:
         paidAmount: amount,
         total: currentTotal,
         discountApplied,
-        employeeDiscountApplied, // Add employee discount to order data
+        employeeDiscountApplied,
         changeAmount: change,
         orderType,
         productNames: productNames,
         items: itemsData,
         paymentMethod: paymentMethod,
+        branch: currentUser.branch || "main",
       };
 
-      await axios.post("http://localhost:3002/orders", orderData);
+      console.log("Saving order for branch:", currentUser.branch);
+
+      const axiosInstance = createAxiosWithHeaders();
+      await axiosInstance.post("http://localhost:3002/orders", orderData);
 
       setPaymentResult({
         type: "success",
@@ -535,19 +676,17 @@ Items:
     }
   };
 
-  // --- Apply Discount ---
   const applyDiscount = () => {
     if (!discountApplied && !employeeDiscountApplied) {
       setDiscountApplied(true);
-      setEmployeeDiscountApplied(false); // Ensure only one discount is active
+      setEmployeeDiscountApplied(false);
     }
   };
 
-  // --- Apply Employee Discount ---
   const applyEmployeeDiscount = () => {
     if (!employeeDiscountApplied && !discountApplied) {
       setEmployeeDiscountApplied(true);
-      setDiscountApplied(false); // Ensure only one discount is active
+      setDiscountApplied(false);
     }
   };
 
@@ -557,9 +696,7 @@ Items:
       return;
     }
 
-    // Create the same receipt text for printing
     const createReceiptText = () => {
-      const user = JSON.parse(localStorage.getItem("user"));
       const currentSubtotal = calculateSubtotal();
       const currentTotal = calculateTotal();
       const change = parseFloat(paymentAmount) - currentTotal;
@@ -568,7 +705,8 @@ Items:
 K - Street Mc Arthur Highway, Magaspac,
 Gerona, Tarlac
 =============================
-Cashier: ${user?.email || "N/A"}
+Cashier: ${currentUser?.email || "N/A"}
+Branch: ${currentUser?.branch || "main"}
 Order Type: ${orderType}
 Payment Method: ${paymentMethod}
 Date: ${new Date().toLocaleString()}
@@ -576,9 +714,7 @@ Date: ${new Date().toLocaleString()}
 Items:
 `;
 
-      // Add cart items - SAME LOGIC AS CART DISPLAY
       cart.forEach((item) => {
-        // Check if it's a flavor or upgrade
         const isFlavor =
           item.selectedUpgrade &&
           item.selectedUpgrade.description_type === "k-street Flavor";
@@ -586,7 +722,6 @@ Items:
           item.selectedUpgrade &&
           item.selectedUpgrade.description_type !== "k-street Flavor";
 
-        // Item name based on type (SAME AS CART DISPLAY)
         let itemName = item.name;
         if (isFlavor) {
           itemName = `[${item.selectedUpgrade.name} FLAVOR] ${item.name}`;
@@ -600,14 +735,12 @@ Items:
 
         receiptText += `${itemName} x${item.quantity} P${itemTotal}\n`;
 
-        // Add addons
         if (item.selectedAddons.length > 0) {
           receiptText += `Add-ons: ${item.selectedAddons
             .map((a) => `${a.name} (+P${a.price})`)
             .join(", ")}\n`;
         }
 
-        // Add upgrade or flavor
         if (item.selectedUpgrade) {
           if (item.selectedUpgrade.description_type === "k-street Flavor") {
             receiptText += `Flavor: ${item.selectedUpgrade.name}\n`;
@@ -616,7 +749,6 @@ Items:
           }
         }
 
-        // Add special instructions
         if (item.specialInstructions) {
           receiptText += `Instructions: ${item.specialInstructions}\n`;
         }
@@ -624,11 +756,9 @@ Items:
         receiptText += "\n";
       });
 
-      // Add totals
       receiptText += `===============================\n`;
       receiptText += `Subtotal: P${currentSubtotal.toFixed(2)}\n`;
 
-      // Add discount info
       if (discountApplied) {
         receiptText += `PWD/Senior Discount (20%): Applied\n`;
       }
@@ -685,7 +815,6 @@ Items:
     printWindow.document.close();
     printWindow.focus();
 
-    // Auto print
     setTimeout(() => {
       printWindow.print();
       printWindow.close();
@@ -701,9 +830,7 @@ Items:
 
       console.log("Saving receipt as PNG...");
 
-      // CREATE PROPER RECEIPT TEXT (GAYAHIN ANG FORMAT NG CART)
       const createReceiptText = () => {
-        const user = JSON.parse(localStorage.getItem("user"));
         const currentSubtotal = calculateSubtotal();
         const currentTotal = calculateTotal();
         const change = parseFloat(paymentAmount) - currentTotal;
@@ -712,7 +839,8 @@ Items:
 K - Street Mc Arthur Highway, Magaspac,
 Gerona, Tarlac
 =============================
-Cashier: ${user?.email || "N/A"}
+Cashier: ${currentUser?.email || "N/A"}
+Branch: ${currentUser?.branch || "main"}
 Order Type: ${orderType}
 Payment Method: ${paymentMethod}
 Date: ${new Date().toLocaleString()}
@@ -720,9 +848,7 @@ Date: ${new Date().toLocaleString()}
 Items:
 `;
 
-        // Add cart items - SAME LOGIC AS CART DISPLAY
         cart.forEach((item) => {
-          // Check if it's a flavor or upgrade
           const isFlavor =
             item.selectedUpgrade &&
             item.selectedUpgrade.description_type === "k-street Flavor";
@@ -730,7 +856,6 @@ Items:
             item.selectedUpgrade &&
             item.selectedUpgrade.description_type !== "k-street Flavor";
 
-          // Item name based on type (SAME AS CART DISPLAY)
           let itemName = item.name;
           if (isFlavor) {
             itemName = `[${item.selectedUpgrade.name} FLAVOR] ${item.name}`;
@@ -744,14 +869,12 @@ Items:
 
           receiptText += `${itemName} x${item.quantity} P${itemTotal}\n`;
 
-          // Add addons
           if (item.selectedAddons.length > 0) {
             receiptText += `Add-ons: ${item.selectedAddons
               .map((a) => `${a.name} (+P${a.price})`)
               .join(", ")}\n`;
           }
 
-          // Add upgrade or flavor
           if (item.selectedUpgrade) {
             if (item.selectedUpgrade.description_type === "k-street Flavor") {
               receiptText += `Flavor: ${item.selectedUpgrade.name}\n`;
@@ -760,7 +883,6 @@ Items:
             }
           }
 
-          // Add special instructions
           if (item.specialInstructions) {
             receiptText += `Instructions: ${item.specialInstructions}\n`;
           }
@@ -768,11 +890,9 @@ Items:
           receiptText += "\n";
         });
 
-        // Add totals
         receiptText += `===============================\n`;
         receiptText += `Subtotal: P${currentSubtotal.toFixed(2)}\n`;
 
-        // Add discount info
         if (discountApplied) {
           receiptText += `PWD/Senior Discount (20%): Applied\n`;
         }
@@ -792,7 +912,6 @@ Items:
         return receiptText;
       };
 
-      // CREATE HTML FOR RENDERING (with proper spacing)
       const receiptHTML = `
         <div style="
           width: 400px;
@@ -810,7 +929,6 @@ Items:
         </div>
       `;
 
-      // Create temporary container
       const container = document.createElement("div");
       container.style.position = "fixed";
       container.style.left = "-9999px";
@@ -818,13 +936,10 @@ Items:
       container.innerHTML = receiptHTML;
       document.body.appendChild(container);
 
-      // Get the actual div element
       const receiptDiv = container.querySelector("div");
 
-      // Wait for rendering
       await new Promise((resolve) => setTimeout(resolve, 100));
 
-      // Capture as image
       const canvas = await html2canvas(receiptDiv, {
         scale: 2,
         backgroundColor: "#ffffff",
@@ -836,21 +951,17 @@ Items:
         windowHeight: receiptDiv.offsetHeight,
       });
 
-      // Convert to data URL
       const imgData = canvas.toDataURL("image/png");
 
-      // Create download link
       const link = document.createElement("a");
       const timestamp = new Date().getTime();
       link.download = `k-street-receipt-${timestamp}.png`;
       link.href = imgData;
 
-      // Trigger download
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
 
-      // Clean up
       document.body.removeChild(container);
 
       console.log("Receipt saved successfully!");
@@ -860,7 +971,6 @@ Items:
     }
   };
 
-  // Handle addon selection
   const handleAddonToggle = (addon) => {
     if (selectedAddons.find((a) => a.id === addon.id)) {
       setSelectedAddons(selectedAddons.filter((a) => a.id !== addon.id));
@@ -869,7 +979,6 @@ Items:
     }
   };
 
-  // Handle upgrade selection
   const handleUpgradeToggle = (upgrade) => {
     if (selectedUpgrades && selectedUpgrades.id === upgrade.id) {
       setSelectedUpgrades(null);
@@ -878,7 +987,6 @@ Items:
     }
   };
 
-  // Calculate total addons price
   const calculateAddonsTotal = () => {
     return selectedAddons.reduce(
       (total, addon) => total + Number(addon.price),
@@ -886,7 +994,6 @@ Items:
     );
   };
 
-  // Filter addons by product category
   const getFilteredAddons = () => {
     if (!selectedProduct) return [];
     return addons.filter(
@@ -896,7 +1003,6 @@ Items:
     );
   };
 
-  // SIMPLE NA: Kunin lang lahat ng items na same product_code
   const getFilteredUpgrades = () => {
     if (!selectedProduct) return [];
 
@@ -906,29 +1012,17 @@ Items:
     console.log("Upgrades count:", upgrades.length);
     console.log("Flavors count:", flavors.length);
 
-    // Combine upgrades and flavors
     const allItems = [...upgrades, ...flavors];
 
-    // Filter by product_code
     const filtered = allItems.filter(
       (item) => item.product_code === selectedProductCode
     );
 
     console.log("✅ Found items:", filtered);
-    console.log(
-      "Items details:",
-      filtered.map((f) => ({
-        name: f.name,
-        product_code: f.product_code,
-        description_type: f.description_type,
-        price: f.price,
-      }))
-    );
 
     return filtered;
   };
 
-  // Calculate discount amounts
   const calculateDiscountAmount = () => {
     if (discountApplied) return subtotal * 0.2;
     if (employeeDiscountApplied) return subtotal * 0.05;
@@ -938,7 +1032,6 @@ Items:
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 p-4">
       <div className="max-w-7xl mx-auto bg-white rounded-2xl shadow-xl overflow-hidden">
-        {/* Modern Header */}
         <div className="bg-gradient-to-r from-red-600 to-red-500 text-white p-6">
           <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
             <div className="flex-1">
@@ -956,7 +1049,6 @@ Items:
                   hour12: true,
                 })}
               </p>
-              {/* Store Status */}
               <div className="mt-3 flex items-center gap-3">
                 <span className="text-red-100 text-sm font-medium">
                   Store Status:
@@ -975,6 +1067,11 @@ Items:
                   <span className="text-red-100 text-sm">
                     {storeOpen ? "Opened" : "Closed"} at{" "}
                     {formatStoreTime(lastActionTime)}
+                  </span>
+                )}
+                {currentUser && (
+                  <span className="text-red-100 text-sm">
+                    Branch: {currentUser.branch || "main"}
                   </span>
                 )}
               </div>
@@ -1005,13 +1102,11 @@ Items:
         </div>
 
         <div className="flex flex-col lg:flex-row">
-          {/* Product List Section */}
           <div className="lg:w-2/3 p-6 border-r border-gray-200">
             <h2 className="text-2xl font-bold text-gray-800 mb-6">
-              Product Catalog
+              Product Catalog {currentUser && `(${currentUser.branch} Branch)`}
             </h2>
 
-            {/* Search and Category Filter */}
             <div className="flex flex-col md:flex-row gap-4 mb-6">
               <div className="flex-1">
                 <input
@@ -1039,7 +1134,6 @@ Items:
               </div>
             </div>
 
-            {/* Product Grid */}
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-5 relative">
               {filteredProducts.map((product) => (
                 <div
@@ -1050,7 +1144,6 @@ Items:
                       : "border-gray-200 opacity-80"
                   }`}
                 >
-                  {/* Product Image */}
                   <div className="h-40 rounded-xl mb-3 overflow-hidden flex items-center justify-center bg-gradient-to-br from-gray-50 to-gray-100">
                     {product.image ? (
                       <img
@@ -1096,7 +1189,6 @@ Items:
             </div>
           </div>
 
-          {/* Order Summary Section */}
           <div className="lg:w-1/3 p-6 bg-gradient-to-br from-gray-50 to-white">
             <div className="flex justify-between items-center mb-6">
               <h2 className="text-2xl font-bold text-gray-800">
@@ -1110,7 +1202,6 @@ Items:
               </button>
             </div>
 
-            {/* Discount Buttons - UPDATED WITH EMPLOYEE DISCOUNT */}
             <div className="mb-4 grid grid-cols-2 gap-3">
               <button
                 className={`w-full py-3.5 rounded-xl font-semibold text-white transition-all shadow-lg ${
@@ -1131,7 +1222,6 @@ Items:
                 {discountApplied ? "PWD/Senior 20%" : "PWD/Senior 20%"}
               </button>
 
-              {/* NEW EMPLOYEE DISCOUNT BUTTON */}
               <button
                 className={`w-full py-3.5 rounded-xl font-semibold text-white transition-all shadow-lg ${
                   employeeDiscountApplied || !storeOpen
@@ -1152,7 +1242,6 @@ Items:
               </button>
             </div>
 
-            {/* Cart Items */}
             <div className="mb-6 max-h-80 overflow-y-auto border-2 border-gray-200 rounded-2xl bg-white shadow-inner">
               {cart.length === 0 ? (
                 <div className="text-center py-12 text-gray-400">
@@ -1255,7 +1344,6 @@ Items:
               )}
             </div>
 
-            {/* Order Summary */}
             <div className="border-t-2 border-gray-200 pt-6">
               <div className="space-y-3 mb-6">
                 <div className="flex justify-between text-gray-700">
@@ -1263,7 +1351,6 @@ Items:
                   <span className="font-semibold">P{subtotal.toFixed(2)}</span>
                 </div>
 
-                {/* Discount Display */}
                 {discountApplied && (
                   <div className="flex justify-between text-amber-600 font-bold bg-amber-50 p-2 rounded-lg">
                     <span>PWD/Senior Discount (20%)</span>
@@ -1290,7 +1377,6 @@ Items:
                 </div>
               </div>
 
-              {/* Payment Method Selection */}
               <h1 className="text-black font-bold text-lg mb-2">
                 Payment Method
               </h1>
@@ -1339,7 +1425,6 @@ Items:
                 </div>
               </div>
 
-              {/* Payment Section */}
               <div className="space-y-4">
                 <h1 className="text-black font-bold text-lg mb-2">
                   Payment Amount
@@ -1471,7 +1556,6 @@ Items:
                     : "Your store is now closed for the day."}
                 </p>
 
-                {/* Time Display */}
                 <div
                   className={`border-2 rounded-2xl p-5 mt-4 ${
                     storeOpen
@@ -1495,7 +1579,6 @@ Items:
                   </p>
                 </div>
 
-                {/* Additional Message */}
                 <div className="mt-4 text-sm text-gray-500">
                   <p>
                     {storeOpen
@@ -1505,7 +1588,6 @@ Items:
                 </div>
               </div>
 
-              {/* Modal Footer */}
               <div className="flex gap-3">
                 <button
                   onClick={() => setShowStoreSuccessModal(false)}
@@ -1523,7 +1605,6 @@ Items:
         </div>
       )}
 
-      {/* --- Add-ons Modal --- */}
       {showAddonsModal && selectedProduct && (
         <div className="fixed inset-0 bg-black bg-opacity-60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-3xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
@@ -1536,7 +1617,6 @@ Items:
             </div>
 
             <div className="p-6">
-              {/* Add-ons Section (Sides) */}
               <div className="mb-6">
                 <h4 className="text-lg font-bold text-gray-800 mb-3">
                   Add-ons (Sides)
@@ -1582,7 +1662,6 @@ Items:
                 </div>
               </div>
 
-              {/* Upgrades Section */}
               <div className="mb-6">
                 <h4 className="text-lg font-bold text-gray-800 mb-3">
                   Upgrades
@@ -1641,7 +1720,6 @@ Items:
                 </div>
               </div>
 
-              {/* k-street Flavor Section - TAMA NA: maliit na k */}
               <div className="mb-6">
                 <h4 className="text-lg font-bold text-gray-800 mb-3">
                   k-street Flavor
@@ -1703,7 +1781,6 @@ Items:
                 </div>
               </div>
 
-              {/* Special Instructions */}
               <div className="mb-6">
                 <h4 className="text-lg font-bold text-gray-800 mb-3">
                   Special Instructions
@@ -1717,7 +1794,6 @@ Items:
                 />
               </div>
 
-              {/* Price Summary */}
               <div className="bg-gray-50 p-4 rounded-xl mb-6">
                 <div className="flex justify-between items-center mb-2">
                   <span className="text-gray-600">
@@ -1771,7 +1847,6 @@ Items:
                 </div>
               </div>
 
-              {/* Action Buttons */}
               <div className="flex gap-3">
                 <button
                   onClick={confirmAddToCart}
@@ -1795,7 +1870,6 @@ Items:
         </div>
       )}
 
-      {/* --- Receipt Modal --- */}
       {showReceiptModal && (
         <div className="fixed inset-0 bg-black bg-opacity-60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-3xl shadow-2xl max-w-md w-full animate-fadeIn">
@@ -1842,8 +1916,9 @@ Items:
                     </div>
                     <hr className="border-dashed border-gray-400 my-3" />
                     <div className="text-left">
-                      <strong>Cashier:</strong>{" "}
-                      {JSON.parse(localStorage.getItem("user"))?.email || "N/A"}
+                      <strong>Cashier:</strong> {currentUser?.email || "N/A"}
+                      <br />
+                      <strong>Branch:</strong> {currentUser?.branch || "main"}
                       <br />
                       <strong>Order Type:</strong> {orderType}
                       <br />
@@ -1967,7 +2042,6 @@ Items:
         </div>
       )}
 
-      {/* --- Payment Modal --- */}
       {showPaymentModal && paymentResult && (
         <div className="fixed inset-0 bg-black bg-opacity-60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-3xl shadow-2xl max-w-md w-full animate-fadeIn">
@@ -2034,7 +2108,6 @@ Items:
                 )}
               </div>
 
-              {/* Modal Footer */}
               <div className="flex gap-3">
                 {paymentResult.type === "error" && (
                   <button

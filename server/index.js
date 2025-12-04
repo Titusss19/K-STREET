@@ -8,7 +8,7 @@ const PORT = 3002;
 
 // Middleware
 app.use(cors());
-app.use(express.json({ limit: "50mb" })); // Increase limit for large data
+app.use(express.json({ limit: "50mb" }));
 
 // Database connection
 const db = mysql.createConnection({
@@ -24,59 +24,168 @@ db.connect((err) => {
   else console.log("Connected to MySQL database");
 });
 
-// ------------------ AUTH ------------------
+// ============================
+// MIDDLEWARE: USER BRANCH FILTERING
+// ============================
+
+// Middleware to extract user from request headers (assuming frontend sends user info)
+const getUserFromRequest = (req, res, next) => {
+  try {
+    // Get user info from headers (frontend should send user info in headers)
+    const userHeader = req.headers["user"];
+    if (userHeader) {
+      req.user = JSON.parse(userHeader);
+    } else if (req.headers["x-user"]) {
+      // Alternative header name
+      req.user = JSON.parse(req.headers["x-user"]);
+    } else if (req.body.user) {
+      // Or from body for specific endpoints
+      req.user = req.body.user;
+    }
+    next();
+  } catch (error) {
+    console.error("Error parsing user info:", error);
+    req.user = null;
+    next();
+  }
+};
+
+// Middleware to check if user is authenticated and has a branch
+const requireUserBranch = (req, res, next) => {
+  if (!req.user || !req.user.branch) {
+    return res.status(401).json({
+      success: false,
+      message: "User authentication required. Please login again.",
+    });
+  }
+  next();
+};
+
+// Apply user middleware to all routes that need branch filtering
+app.use(getUserFromRequest);
+
+// ============================
+// HELPER FUNCTIONS
+// ============================
+
+// Helper function to build WHERE clause for branch filtering
+const buildBranchWhereClause = (userBranch, tableAlias = "") => {
+  if (!userBranch) return { clause: "", params: [] };
+
+  const prefix = tableAlias ? `${tableAlias}.` : "";
+  return {
+    clause: ` WHERE ${prefix}branch = ?`,
+    params: [userBranch],
+  };
+};
+
+// Helper function to add branch to queries
+const addBranchToQuery = (baseQuery, userBranch, tableAlias = "") => {
+  if (!userBranch) return baseQuery;
+
+  const hasWhere = baseQuery.toUpperCase().includes("WHERE");
+  const clause = hasWhere ? " AND" : " WHERE";
+  const prefix = tableAlias ? `${tableAlias}.` : "";
+
+  return `${baseQuery}${clause} ${prefix}branch = ?`;
+};
+
+// ============================
+// AUTH ENDPOINTS
+// ============================
 app.post("/register", async (req, res) => {
   try {
-    const { email, password, confirmPassword, role, status } = req.body;
+    const { email, username, password, confirmPassword, role, status, branch } =
+      req.body;
 
-    if (!email || !password || !confirmPassword)
-      return res
-        .status(400)
-        .json({ success: false, message: "All fields are required" });
+    console.log("=== REGISTER REQUEST ===");
+    console.log("Role from frontend:", role);
 
-    if (password !== confirmPassword)
-      return res
-        .status(400)
-        .json({ success: false, message: "Passwords do not match" });
+    // BAGUHIN: Validation
+    if (!email || !password || !confirmPassword) {
+      return res.status(400).json({
+        success: false,
+        message: "Email and password are required",
+      });
+    }
 
-    if (password.length < 6)
+    if (password !== confirmPassword) {
+      return res.status(400).json({
+        success: false,
+        message: "Passwords do not match",
+      });
+    }
+
+    if (password.length < 6) {
       return res.status(400).json({
         success: false,
         message: "Password must be at least 6 characters",
       });
+    }
 
+    // Check if email already exists
     db.execute(
       "SELECT * FROM users WHERE email = ?",
       [email],
       async (err, results) => {
-        if (err)
-          return res
-            .status(500)
-            .json({ success: false, message: "Server error" });
-        if (results.length > 0)
-          return res
-            .status(400)
-            .json({ success: false, message: "Email already exists" });
+        if (err) {
+          console.error("Database error:", err);
+          return res.status(500).json({
+            success: false,
+            message: "Server error",
+          });
+        }
+
+        if (results.some((user) => user.email === email)) {
+          return res.status(400).json({
+            success: false,
+            message: "Email already exists",
+          });
+        }
 
         const hashedPassword = await bcrypt.hash(password, 10);
 
-        const userRole = role || "cashier";
+        // BAGUHIN: Role conversion for registration
+        let dbRole = role || "cashier";
+
+        // IMPORTANT: "admin" in frontend = "owner" in database
+        if (dbRole === "admin") {
+          dbRole = "owner";
+          console.log("Register: Converting 'admin' to 'owner' for database");
+        }
+
+        console.log("Final DB Role:", dbRole);
+
         const userStatus = status || "Active";
+        const userBranch = branch || "main";
+
+        // BAGUHIN: Use email as username if not provided
+        const finalUsername = username || email.split("@")[0];
 
         db.execute(
-          "INSERT INTO users (email, password, role, status) VALUES (?, ?, ?, ?)",
-          [email, hashedPassword, userRole, userStatus],
+          "INSERT INTO users (email, username, password, role, status, branch) VALUES (?, ?, ?, ?, ?, ?)",
+          [
+            email,
+            finalUsername,
+            hashedPassword,
+            dbRole,
+            userStatus,
+            userBranch,
+          ],
           (err, results) => {
             if (err) {
               console.error("Error creating account:", err);
-              return res
-                .status(500)
-                .json({ success: false, message: "Error creating account" });
+              return res.status(500).json({
+                success: false,
+                message: "Error creating account: " + err.message,
+              });
             }
             res.status(201).json({
               success: true,
               message: "Account created successfully",
               userId: results.insertId,
+              role: role, // Return frontend role
+              dbRole: dbRole, // For debugging
             });
           }
         );
@@ -84,8 +193,34 @@ app.post("/register", async (req, res) => {
     );
   } catch (error) {
     console.error(error);
-    res.status(500).json({ success: false, message: "Internal server error" });
+    res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
   }
+});
+
+// Debug endpoint to see raw database data
+app.get("/debug-users/:id", (req, res) => {
+  const { id } = req.params;
+  
+  db.execute(
+    "SELECT * FROM users WHERE id = ?",
+    [id],
+    (err, results) => {
+      if (err) {
+        console.error("Error fetching user:", err);
+        return res.status(500).json({ error: err.message });
+      }
+      
+      if (results.length === 0) {
+        return res.status(404).json({ message: "User not found" });
+      }
+      
+      console.log("RAW DATABASE USER:", results[0]);
+      res.json(results[0]);
+    }
+  );
 });
 
 app.post("/login", (req, res) => {
@@ -116,14 +251,21 @@ app.post("/login", (req, res) => {
             .status(400)
             .json({ success: false, message: "Invalid password" });
 
+        let frontendRole = user.role;
+        if (frontendRole === "owner") {
+          frontendRole = "admin";
+        }
+
         res.json({
           success: true,
           message: "Login successful",
           user: {
             id: user.id,
             email: user.email,
-            role: user.role || "cashier",
+            username: user.username || user.email.split("@")[0], // Use username or fallback
+            role: frontendRole,
             status: user.status || "Active",
+            branch: user.branch || "main",
           },
         });
       }
@@ -134,32 +276,319 @@ app.post("/login", (req, res) => {
   }
 });
 
-// ------------------ USERS ------------------
+// ============================
+// STORE HOURS / STATUS
+// ============================
+
+// Check current store status with automatic branch filtering
+app.get("/store-hours/current-store-status", requireUserBranch, (req, res) => {
+  const userBranch = req.user.branch;
+
+  console.log("Fetching store status for user branch:", userBranch);
+
+  const query = `
+    SELECT 
+      s.*,
+      u.email as action_by_email
+    FROM store_status_log s
+    LEFT JOIN users u ON s.user_id = u.id
+    WHERE s.branch = ?
+    ORDER BY s.timestamp DESC LIMIT 1
+  `;
+
+  db.execute(query, [userBranch], (err, results) => {
+    if (err) {
+      console.error("Error fetching store status:", err);
+      return res.status(500).json({
+        success: false,
+        message: "Error fetching store status",
+      });
+    }
+
+    if (results.length === 0) {
+      console.log("No store status found for branch:", userBranch);
+      return res.json({
+        isOpen: false,
+        lastAction: null,
+        message: "Store status not initialized",
+      });
+    }
+
+    const lastAction = results[0];
+    console.log("Found store status:", lastAction);
+
+    res.json({
+      isOpen: lastAction.action === "open",
+      lastAction: {
+        timestamp: lastAction.timestamp,
+        action: lastAction.action,
+        user_id: lastAction.user_id,
+        branch: lastAction.branch,
+        action_by_email: lastAction.action_by_email,
+      },
+    });
+  });
+});
+
+// Log store action (open/close) - automatically uses user's branch
+app.post("/store-hours/log-store-action", requireUserBranch, (req, res) => {
+  const { userId, userEmail, action } = req.body;
+  const userBranch = req.user.branch;
+
+  console.log("Logging store action for user branch:", userBranch);
+
+  if (!userId || !action) {
+    return res.status(400).json({
+      success: false,
+      message: "User ID and action are required",
+    });
+  }
+
+  const validActions = ["open", "close"];
+  if (!validActions.includes(action)) {
+    return res.status(400).json({
+      success: false,
+      message: "Action must be 'open' or 'close'",
+    });
+  }
+
+  const query = `
+    INSERT INTO store_status_log (user_id, user_email, action, branch)
+    VALUES (?, ?, ?, ?)
+  `;
+
+  db.execute(query, [userId, userEmail, action, userBranch], (err, results) => {
+    if (err) {
+      console.error("Error logging store action:", err);
+      return res.status(500).json({
+        success: false,
+        message: "Failed to log store action",
+        error: err.message,
+      });
+    }
+
+    console.log("Store action logged successfully:", results.insertId);
+
+    res.json({
+      success: true,
+      message: `Store ${action}ed successfully`,
+      logId: results.insertId,
+      timestamp: new Date().toISOString(),
+      branch: userBranch,
+    });
+  });
+});
+
+// ============================
+// USERS ENDPOINTS
+// ============================
+
+// Get users - ADMIN ONLY (can see all users)
+// Get users - ADMIN ONLY (can see all users)
 app.get("/users", (req, res) => {
-  db.execute(
-    "SELECT id, email, role, status, created_at FROM users ORDER BY created_at DESC",
-    (err, results) => {
-      if (err)
-        return res.status(500).json({ success: false, message: err.message });
-      res.json(results);
-    }
-  );
+  if (req.user && (req.user.role === "admin" || req.user.role === "owner")) {
+    db.execute(
+      "SELECT id, email, username, role, status, branch, created_at FROM users ORDER BY created_at DESC",
+      (err, results) => {
+        if (err)
+          return res.status(500).json({ success: false, message: err.message });
+
+        // BAGUHIN: I-convert ang database role to frontend role
+        const convertedResults = results.map((user) => ({
+          ...user,
+          // IMPORTANT: Sa database "owner" = sa frontend "admin"
+          role: user.role === "owner" ? "admin" : user.role,
+        }));
+
+        console.log("Users fetched:", convertedResults.length);
+        console.log("Sample user:", convertedResults[0]);
+        
+        res.json(convertedResults);
+      }
+    );
+  } else if (req.user && req.user.branch) {
+    db.execute(
+      "SELECT id, email, username, role, status, branch, created_at FROM users WHERE branch = ? ORDER BY created_at DESC",
+      [req.user.branch],
+      (err, results) => {
+        if (err)
+          return res.status(500).json({ success: false, message: err.message });
+
+        // BAGUHIN: Same conversion
+        const convertedResults = results.map((user) => ({
+          ...user,
+          role: user.role === "owner" ? "admin" : user.role,
+        }));
+
+        res.json(convertedResults);
+      }
+    );
+  } else {
+    res.status(401).json({
+      success: false,
+      message: "Authentication required",
+    });
+  }
 });
 
-// ------------------ ANNOUNCEMENTS ------------------
-app.get("/announcements", (req, res) => {
-  db.execute(
-    "SELECT * FROM announcements ORDER BY created_at DESC",
-    (err, results) => {
-      if (err)
-        return res.status(500).json({ success: false, message: err.message });
-      res.json(results);
+app.put("/users/:id", requireUserBranch, (req, res) => {
+  const { id } = req.params;
+  const { email, username, role, status, branch } = req.body;
+  const userBranch = req.user.branch;
+
+  console.log("📝 UPDATE USER - Role:", role);
+
+  // Validate role is one of the allowed values
+  const allowedRoles = ["cashier", "manager", "admin"];
+  if (!allowedRoles.includes(role)) {
+    return res.status(400).json({
+      success: false,
+      message: "Invalid role. Must be cashier, manager, or admin",
+    });
+  }
+
+  // DIRECT SAVE - walang conversion
+  const dbRole = role;
+
+  const isAdmin = req.user.role === "admin";
+
+  let query;
+  let params;
+
+  if (isAdmin) {
+    query =
+      "UPDATE users SET email = ?, role = ?, status = ?, branch = ? WHERE id = ?";
+    params = [email, dbRole, status, branch, id];
+  } else {
+    query =
+      "UPDATE users SET email = ?, role = ?, status = ? WHERE id = ? AND branch = ?";
+    params = [email, dbRole, status, id, userBranch];
+  }
+
+  db.execute(query, params, (err, result) => {
+    if (err) {
+      console.error("Database error:", err);
+      return res.status(500).json({
+        success: false,
+        message: "Database error",
+      });
     }
-  );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    res.json({
+      success: true,
+      message: "User updated successfully",
+    });
+  });
 });
 
-app.post("/announcements", (req, res) => {
-  const { title, content, author } = req.body;
+app.delete("/users/:id", requireUserBranch, (req, res) => {
+  const { id } = req.params;
+  const userBranch = req.user.branch;
+
+  // Only allow deleting users in the same branch unless admin
+  let query;
+  let params;
+
+ if (req.user.role === "admin" || req.user.role === "owner") {
+   query = "DELETE FROM users WHERE id = ?";
+   params = [id];
+ } else {
+   query = "DELETE FROM users WHERE id = ? AND branch = ?";
+   params = [id, userBranch];
+ }
+
+  db.execute(query, params, (err) => {
+    if (err)
+      return res.status(500).json({ success: false, message: err.message });
+    res.json({ success: true, message: "User deleted" });
+  });
+});
+
+/// ============================
+// ANNOUNCEMENTS - FIXED VERSION
+// ============================
+
+// Get announcements - show global announcements to all, branch-specific to respective branches
+
+app.get("/announcements", requireUserBranch, (req, res) => {
+  const userBranch = req.user.branch;
+  const userRole = req.user.role;
+  const requestedBranch = req.query.branch; // Get branch from query parameter
+
+  console.log("Fetching announcements:", {
+    userBranch: userBranch,
+    userRole: userRole,
+    requestedBranch: requestedBranch
+  });
+
+  let query;
+  let params = [];
+
+  // Kapag admin/owner at may specific branch filter
+  if ((userRole === "admin" || userRole === "owner") && requestedBranch) {
+    query = `
+      SELECT * FROM announcements 
+      WHERE is_global = TRUE OR branch = ?
+      ORDER BY 
+        CASE WHEN is_global = TRUE THEN 1 ELSE 2 END,
+        created_at DESC
+    `;
+    params = [requestedBranch];
+  }
+  // Kapag admin/owner at WALANG branch filter (default: lahat ng announcements)
+  else if (userRole === "admin" || userRole === "owner") {
+    query = `
+      SELECT * FROM announcements 
+      ORDER BY 
+        CASE WHEN is_global = TRUE THEN 1 ELSE 2 END,
+        created_at DESC
+    `;
+    params = [];
+  }
+  // Para sa non-admin users
+  else {
+    query = `
+      SELECT * FROM announcements 
+      WHERE is_global = TRUE OR branch = ?
+      ORDER BY 
+        CASE WHEN is_global = TRUE THEN 1 ELSE 2 END,
+        created_at DESC
+    `;
+    params = [userBranch];
+  }
+
+  console.log("Executing query:", query);
+  console.log("With params:", params);
+
+  db.execute(query, params, (err, results) => {
+    if (err) {
+      console.error("Error fetching announcements:", err);
+      return res.status(500).json({ success: false, message: err.message });
+    }
+
+    console.log(`Found ${results.length} announcements`);
+    res.json(results);
+  });
+});
+// Create announcement - automatically global for admin/owner - FIXED
+app.post("/announcements", requireUserBranch, (req, res) => {
+  const { title, content, author, type } = req.body;
+  const userBranch = req.user.branch;
+  const userRole = req.user.role;
+
+  console.log("Creating announcement:", { 
+    title, 
+    author, 
+    userRole,
+    userBranch 
+  });
 
   if (!title || !content || !author) {
     return res.status(400).json({
@@ -168,24 +597,56 @@ app.post("/announcements", (req, res) => {
     });
   }
 
+  // AUTOMATICALLY GLOBAL FOR ADMIN/OWNER, BRANCH-SPECIFIC FOR OTHERS
+  let finalIsGlobal = false;
+  let finalBranch = userBranch;
+
+  if (userRole === "admin" || userRole === "owner") {
+    finalIsGlobal = true;  // AUTO-GLOBAL for admin/owner
+    finalBranch = null;    // No specific branch
+    console.log("Admin/Owner posting - MAKING IT GLOBAL");
+  } else {
+    console.log("Non-admin posting - BRANCH SPECIFIC:", userBranch);
+  }
+
+  const query = `
+    INSERT INTO announcements (title, message, author, type, branch, is_global)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `;
+
   db.execute(
-    "INSERT INTO announcements (title, content, author) VALUES (?, ?, ?)",
-    [title, content, author],
+    query,
+    [title, content, author, type || "info", finalBranch, finalIsGlobal],
     (err, results) => {
-      if (err)
+      if (err) {
+        console.error("Error creating announcement:", err);
         return res.status(500).json({ success: false, message: err.message });
+      }
+
+      console.log("Announcement created successfully:", {
+        id: results.insertId,
+        is_global: finalIsGlobal,
+        branch: finalBranch,
+        for_admin_owner: (userRole === "admin" || userRole === "owner") ? "GLOBAL" : "BRANCH_ONLY"
+      });
+
       res.status(201).json({
         success: true,
         message: "Announcement created successfully",
         announcementId: results.insertId,
+        is_global: finalIsGlobal,
+        is_admin_owner: (userRole === "admin" || userRole === "owner")
       });
     }
   );
 });
 
-app.put("/announcements/:id", (req, res) => {
+// Update announcement - check permissions - FIXED
+app.put("/announcements/:id", requireUserBranch, (req, res) => {
   const { id } = req.params;
-  const { title, content } = req.body;
+  const { title, content, type, is_global } = req.body;
+  const userBranch = req.user.branch;
+  const userRole = req.user.role;
 
   if (!title || !content) {
     return res.status(400).json({
@@ -194,43 +655,267 @@ app.put("/announcements/:id", (req, res) => {
     });
   }
 
-  db.execute(
-    "UPDATE announcements SET title = ?, content = ? WHERE id = ?",
-    [title, content, id],
-    (err) => {
-      if (err)
-        return res.status(500).json({ success: false, message: err.message });
-      res.json({ success: true, message: "Announcement updated" });
-    }
-  );
-});
-
-app.delete("/announcements/:id", (req, res) => {
-  const { id } = req.params;
-  db.execute("DELETE FROM announcements WHERE id = ?", [id], (err) => {
-    if (err)
+  // First, get the existing announcement to check permissions
+  const getQuery = "SELECT * FROM announcements WHERE id = ?";
+  
+  db.execute(getQuery, [id], (err, results) => {
+    if (err) {
       return res.status(500).json({ success: false, message: err.message });
-    res.json({ success: true, message: "Announcement deleted" });
+    }
+
+    if (results.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Announcement not found",
+      });
+    }
+
+    const existingAnnouncement = results[0];
+    
+    // Check permissions
+    // Admin/Owner can edit any announcement
+    // Non-admin can only edit their branch announcements (not global ones)
+    if (userRole !== "admin" && userRole !== "owner") {
+      if (existingAnnouncement.is_global || existingAnnouncement.branch !== userBranch) {
+        return res.status(403).json({
+          success: false,
+          message: "You don't have permission to edit this announcement",
+        });
+      }
+    }
+
+    // Determine if we need to update global status
+    let updateQuery;
+    let updateParams;
+
+    if (userRole === "admin" || userRole === "owner") {
+      // Admin can change global status
+      const newIsGlobal = is_global ? 1 : 0;
+      const newBranch = is_global ? null : userBranch;
+      
+      updateQuery = `
+        UPDATE announcements 
+        SET title = ?, message = ?, type = ?, is_global = ?, branch = ?
+        WHERE id = ?
+      `;
+      updateParams = [title, content, type || "info", newIsGlobal, newBranch, id];
+    } else {
+      // Non-admin can only update content, not global status
+      updateQuery = `
+        UPDATE announcements 
+        SET title = ?, message = ?, type = ?
+        WHERE id = ?
+      `;
+      updateParams = [title, content, type || "info", id];
+    }
+
+    db.execute(updateQuery, updateParams, (err, results) => {
+      if (err) {
+        return res.status(500).json({ success: false, message: err.message });
+      }
+
+      if (results.affectedRows === 0) {
+        return res.status(404).json({
+          success: false,
+          message: "Announcement not found",
+        });
+      }
+
+      res.json({ 
+        success: true, 
+        message: "Announcement updated",
+        is_global: is_global || existingAnnouncement.is_global
+      });
+    });
   });
 });
 
-// ------------------ ITEMS ------------------
-app.get("/items", (req, res) => {
-  const query =
-    "SELECT * FROM items WHERE description_type = 'k-street food' ORDER BY created_at DESC";
+// Update announcement - check permissions
+app.put("/announcements/:id", requireUserBranch, (req, res) => {
+  const { id } = req.params;
+  const { title, content, type, is_global } = req.body;
+  const userBranch = req.user.branch;
+  const userRole = req.user.role;
 
-  db.execute(query, (err, results) => {
+  if (!title || !content) {
+    return res.status(400).json({
+      success: false,
+      message: "Title and content are required",
+    });
+  }
+
+  // First, get the existing announcement to check permissions
+  const getQuery = "SELECT * FROM announcements WHERE id = ?";
+  
+  db.execute(getQuery, [id], (err, results) => {
+    if (err) {
+      return res.status(500).json({ success: false, message: err.message });
+    }
+
+    if (results.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Announcement not found",
+      });
+    }
+
+    const existingAnnouncement = results[0];
+    
+    // Check permissions
+    // Admin/Owner can edit any announcement
+    // Non-admin can only edit their branch announcements (not global ones)
+    if (userRole !== "admin" && userRole !== "owner") {
+      if (existingAnnouncement.is_global || existingAnnouncement.branch !== userBranch) {
+        return res.status(403).json({
+          success: false,
+          message: "You don't have permission to edit this announcement",
+        });
+      }
+    }
+
+    // Determine if we need to update global status
+    let updateQuery;
+    let updateParams;
+
+    if (userRole === "admin" || userRole === "owner") {
+      // Admin can change global status
+      const newIsGlobal = is_global ? 1 : 0;
+      const newBranch = is_global ? null : userBranch;
+      
+      updateQuery = `
+        UPDATE announcements 
+        SET title = ?, content = ?, type = ?, is_global = ?, branch = ?
+        WHERE id = ?
+      `;
+      updateParams = [title, content, type || "info", newIsGlobal, newBranch, id];
+    } else {
+      // Non-admin can only update content, not global status
+      updateQuery = `
+        UPDATE announcements 
+        SET title = ?, content = ?, type = ?
+        WHERE id = ?
+      `;
+      updateParams = [title, content, type || "info", id];
+    }
+
+    db.execute(updateQuery, updateParams, (err, results) => {
+      if (err) {
+        return res.status(500).json({ success: false, message: err.message });
+      }
+
+      if (results.affectedRows === 0) {
+        return res.status(404).json({
+          success: false,
+          message: "Announcement not found",
+        });
+      }
+
+      res.json({ 
+        success: true, 
+        message: "Announcement updated",
+        is_global: is_global || existingAnnouncement.is_global
+      });
+    });
+  });
+});
+
+// Delete announcement - check permissions
+app.delete("/announcements/:id", requireUserBranch, (req, res) => {
+  const { id } = req.params;
+  const userBranch = req.user.branch;
+  const userRole = req.user.role;
+
+  // First, get the announcement to check permissions
+  const getQuery = "SELECT * FROM announcements WHERE id = ?";
+  
+  db.execute(getQuery, [id], (err, results) => {
+    if (err) {
+      return res.status(500).json({ success: false, message: err.message });
+    }
+
+    if (results.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Announcement not found",
+      });
+    }
+
+    const announcement = results[0];
+    
+    // Check permissions
+    // Admin/Owner can delete any announcement
+    // Non-admin can only delete their branch announcements (not global ones)
+    if (userRole !== "admin" && userRole !== "owner") {
+      if (announcement.is_global || announcement.branch !== userBranch) {
+        return res.status(403).json({
+          success: false,
+          message: "You don't have permission to delete this announcement",
+        });
+      }
+    }
+
+    // Delete the announcement
+    const deleteQuery = "DELETE FROM announcements WHERE id = ?";
+    db.execute(deleteQuery, [id], (err) => {
+      if (err) {
+        return res.status(500).json({ success: false, message: err.message });
+      }
+      
+      res.json({ 
+        success: true, 
+        message: "Announcement deleted",
+        was_global: announcement.is_global
+      });
+    });
+  });
+});
+
+// ============================
+// ITEMS ENDPOINTS
+// ============================
+
+// Get all items - automatically filtered by user's branch
+app.get("/all-items", requireUserBranch, (req, res) => {
+  const userBranch = req.user.branch;
+
+  const query = `
+    SELECT * FROM items 
+    WHERE branch = ? 
+    ORDER BY created_at DESC
+  `;
+
+  db.execute(query, [userBranch], (err, results) => {
     if (err)
       return res.status(500).json({ success: false, message: err.message });
     res.json(results);
   });
 });
 
-app.post("/items", (req, res) => {
+// Get items - automatically filtered by user's branch
+app.get("/items", requireUserBranch, (req, res) => {
+  const userBranch = req.user.branch;
+
+  const query = `
+    SELECT * FROM items 
+    WHERE branch = ? 
+    ORDER BY created_at DESC
+  `;
+
+  db.execute(query, [userBranch], (err, results) => {
+    if (err)
+      return res.status(500).json({ success: false, message: err.message });
+    res.json(results);
+  });
+});
+
+// Create item - automatically uses user's branch
+app.post("/items", requireUserBranch, (req, res) => {
   const { product_code, name, category, description_type, price, image } =
     req.body;
+  const userBranch = req.user.branch;
 
   console.log("=== BACKEND: CREATING ITEM ===");
+  console.log("User branch:", userBranch);
   console.log("Request body:", req.body);
 
   if (description_type === "k-street Flavor") {
@@ -238,15 +923,22 @@ app.post("/items", (req, res) => {
       console.log("Missing fields for flavor item");
       return res.status(400).json({
         success: false,
-        message:
-          "Product code, name, category, description type, and image are required",
+        message: "All fields are required",
       });
     }
     const finalPrice = Number(price) || 0;
 
     db.execute(
-      "INSERT INTO items (product_code, name, category, description_type, price, image) VALUES (?, ?, ?, ?, ?, ?)",
-      [product_code, name, category, description_type, finalPrice, image],
+      "INSERT INTO items (product_code, name, category, description_type, price, image, branch) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      [
+        product_code,
+        name,
+        category,
+        description_type,
+        finalPrice,
+        image,
+        userBranch,
+      ],
       (err, results) => {
         if (err) {
           console.error("Database error:", err);
@@ -257,9 +949,6 @@ app.post("/items", (req, res) => {
         }
 
         console.log("✅ FLAVOR ITEM CREATED SUCCESSFULLY!");
-        console.log("Product Code:", product_code);
-        console.log("Price (auto-set to 0):", finalPrice);
-
         res.status(201).json({
           success: true,
           id: results.insertId,
@@ -269,6 +958,7 @@ app.post("/items", (req, res) => {
           description_type,
           price: finalPrice,
           image,
+          branch: userBranch,
         });
       }
     );
@@ -284,13 +974,21 @@ app.post("/items", (req, res) => {
       console.log("Missing fields for non-flavor item");
       return res.status(400).json({
         success: false,
-        message: "All fields are required for non-flavor items",
+        message: "All fields are required",
       });
     }
 
     db.execute(
-      "INSERT INTO items (product_code, name, category, description_type, price, image) VALUES (?, ?, ?, ?, ?, ?)",
-      [product_code, name, category, description_type, Number(price), image],
+      "INSERT INTO items (product_code, name, category, description_type, price, image, branch) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      [
+        product_code,
+        name,
+        category,
+        description_type,
+        Number(price),
+        image,
+        userBranch,
+      ],
       (err, results) => {
         if (err) {
           console.error("Database error:", err);
@@ -301,8 +999,6 @@ app.post("/items", (req, res) => {
         }
 
         console.log("✅ REGULAR ITEM CREATED SUCCESSFULLY!");
-        console.log("Product Code:", product_code);
-
         res.status(201).json({
           success: true,
           id: results.insertId,
@@ -312,20 +1008,23 @@ app.post("/items", (req, res) => {
           description_type,
           price: Number(price),
           image,
+          branch: userBranch,
         });
       }
     );
   }
 });
 
-// UPDATE ITEM ROUTE
-app.put("/items/:id", (req, res) => {
+// Update item - only if it belongs to user's branch
+app.put("/items/:id", requireUserBranch, (req, res) => {
   const { id } = req.params;
   const { product_code, name, category, description_type, price, image } =
     req.body;
+  const userBranch = req.user.branch;
 
   console.log("=== BACKEND: UPDATING ITEM ===");
   console.log("Item ID:", id);
+  console.log("User branch:", userBranch);
   console.log("Request body:", req.body);
 
   if (!product_code || !name || !price) {
@@ -335,8 +1034,8 @@ app.put("/items/:id", (req, res) => {
     });
   }
 
-  const sqlGet = "SELECT image FROM items WHERE id = ?";
-  db.query(sqlGet, [id], (err, result) => {
+  const sqlGet = "SELECT image FROM items WHERE id = ? AND branch = ?";
+  db.query(sqlGet, [id, userBranch], (err, result) => {
     if (err) {
       console.error("Database error:", err);
       return res.status(500).json({
@@ -348,7 +1047,7 @@ app.put("/items/:id", (req, res) => {
     if (result.length === 0) {
       return res.status(404).json({
         success: false,
-        message: "Item not found",
+        message: "Item not found or you don't have permission to edit it",
       });
     }
 
@@ -358,12 +1057,21 @@ app.put("/items/:id", (req, res) => {
     const sqlUpdate = `
       UPDATE items 
       SET product_code=?, name=?, category=?, description_type=?, price=?, image=?
-      WHERE id=?
+      WHERE id=? AND branch=?
     `;
 
     db.query(
       sqlUpdate,
-      [product_code, name, category, description_type, price, finalImage, id],
+      [
+        product_code,
+        name,
+        category,
+        description_type,
+        price,
+        finalImage,
+        id,
+        userBranch,
+      ],
       (err3, results) => {
         if (err3) {
           console.error("Update failed:", err3);
@@ -373,10 +1081,14 @@ app.put("/items/:id", (req, res) => {
           });
         }
 
-        console.log("✅ ITEM UPDATED SUCCESSFULLY!");
-        console.log("Updated item ID:", id);
-        console.log("Product Code:", product_code);
+        if (results.affectedRows === 0) {
+          return res.status(403).json({
+            success: false,
+            message: "You don't have permission to update this item",
+          });
+        }
 
+        console.log("✅ ITEM UPDATED SUCCESSFULLY!");
         res.json({
           success: true,
           message: "Item updated successfully",
@@ -387,90 +1099,207 @@ app.put("/items/:id", (req, res) => {
   });
 });
 
-// DELETE ITEM ROUTE
-app.delete("/items/:id", (req, res) => {
+// Delete item - only if it belongs to user's branch
+app.delete("/items/:id", requireUserBranch, (req, res) => {
   const { id } = req.params;
+  const userBranch = req.user.branch;
 
   console.log("=== BACKEND: DELETING ITEM ===");
   console.log("Item ID to delete:", id);
+  console.log("User branch:", userBranch);
 
-  db.execute("DELETE FROM items WHERE id = ?", [id], (err, results) => {
-    if (err) {
-      console.error("Database error:", err);
-      return res.status(500).json({ success: false, message: err.message });
-    }
+  db.execute(
+    "DELETE FROM items WHERE id = ? AND branch = ?",
+    [id, userBranch],
+    (err, results) => {
+      if (err) {
+        console.error("Database error:", err);
+        return res.status(500).json({ success: false, message: err.message });
+      }
 
-    if (results.affectedRows === 0) {
-      return res.status(404).json({
-        success: false,
-        message: "Item not found",
+      if (results.affectedRows === 0) {
+        return res.status(404).json({
+          success: false,
+          message: "Item not found or you don't have permission to delete it",
+        });
+      }
+
+      console.log("✅ ITEM DELETED SUCCESSFULLY!");
+      res.json({
+        success: true,
+        message: "Item deleted successfully",
+        deletedId: id,
       });
     }
-
-    console.log("✅ ITEM DELETED SUCCESSFULLY!");
-    console.log("Deleted item ID:", id);
-
-    res.json({
-      success: true,
-      message: "Item deleted successfully",
-      deletedId: id,
-    });
-  });
+  );
 });
 
-// ------------------ STORE HOURS LOGS ------------------
-app.get("/store-hours-logs", (req, res) => {
-  const query = `
-    SELECT 
-      shl.*,
-      u.email as user_email
-    FROM store_hours_logs shl
-    LEFT JOIN users u ON shl.user_id = u.id
-    ORDER BY shl.timestamp DESC
-  `;
+// ============================
+// ORDERS ENDPOINTS
+// ============================
 
-  db.execute(query, (err, results) => {
-    if (err) {
-      console.error("Error fetching store hours logs:", err);
-      return res.status(500).json({
-        success: false,
-        message: "Error fetching store hours logs",
-      });
+// Get orders - automatically filtered by user's branch
+// Get orders - automatically filtered by user's branch
+app.get("/orders", requireUserBranch, (req, res) => {
+  const userBranch = req.user.branch;
+  const userRole = req.user.role;
+
+  console.log(`=== FETCHING ORDERS ===`);
+  console.log(`User role: ${userRole}`);
+  console.log(`User branch: ${userBranch}`);
+  console.log(`Query parameter branch: ${req.query.branch}`);
+  console.log(`Request headers user:`, req.user);
+
+  let query;
+  let params = [];
+
+  // If query parameter has branch filter
+  if (req.query.branch) {
+    console.log(`Using branch filter from query: ${req.query.branch}`);
+    
+    if (req.query.branch === "all") {
+      // Show all orders for all branches (admin only)
+      if (userRole === "admin" || userRole === "owner") {
+        query = `
+          SELECT 
+            o.*,
+            u.email as cashier
+          FROM orders o
+          LEFT JOIN users u ON o.userId = u.id
+          ORDER BY o.created_at DESC
+        `;
+        console.log("Admin viewing all orders from all branches");
+      } else {
+        // Non-admin can only see their own branch even if they request "all"
+        query = `
+          SELECT 
+            o.*,
+            u.email as cashier
+          FROM orders o
+          LEFT JOIN users u ON o.userId = u.id
+          WHERE o.branch = ?
+          ORDER BY o.created_at DESC
+        `;
+        params = [userBranch];
+        console.log("Non-admin restricted to own branch:", userBranch);
+      }
+    } else {
+      // Specific branch requested
+      if (userRole === "admin" || userRole === "owner") {
+        // Admin can view any specific branch
+        query = `
+          SELECT 
+            o.*,
+            u.email as cashier
+          FROM orders o
+          LEFT JOIN users u ON o.userId = u.id
+          WHERE o.branch = ?
+          ORDER BY o.created_at DESC
+        `;
+        params = [req.query.branch];
+        console.log("Admin viewing specific branch:", req.query.branch);
+      } else {
+        // Non-admin can only view their own branch
+        if (req.query.branch === userBranch) {
+          query = `
+            SELECT 
+              o.*,
+              u.email as cashier
+            FROM orders o
+            LEFT JOIN users u ON o.userId = u.id
+            WHERE o.branch = ?
+            ORDER BY o.created_at DESC
+          `;
+          params = [userBranch];
+          console.log("Non-admin viewing own branch:", userBranch);
+        } else {
+          // Non-admin trying to view different branch - return empty
+          console.log("Non-admin trying to view different branch. Returning empty array.");
+          return res.json([]);
+        }
+      }
     }
-    res.json(results);
-  });
-});
+  } else {
+    // No branch query parameter - use default behavior
+    if (userRole === "admin" || userRole === "owner") {
+      // Admin sees all orders by default
+      query = `
+        SELECT 
+          o.*,
+          u.email as cashier
+        FROM orders o
+        LEFT JOIN users u ON o.userId = u.id
+        ORDER BY o.created_at DESC
+      `;
+      console.log("Admin viewing all orders (no branch filter)");
+    } else {
+      // Non-admin sees only their branch
+      query = `
+        SELECT 
+          o.*,
+          u.email as cashier
+        FROM orders o
+        LEFT JOIN users u ON o.userId = u.id
+        WHERE o.branch = ?
+        ORDER BY o.created_at DESC
+      `;
+      params = [userBranch];
+      console.log("Non-admin viewing own branch:", userBranch);
+    }
+  }
 
-// ------------------ ORDERS ------------------
-app.get("/orders", (req, res) => {
-  const query = `
-    SELECT 
-      o.*,
-      u.email as cashier
-    FROM orders o
-    LEFT JOIN users u ON o.userId = u.id
-    ORDER BY o.created_at DESC
-  `;
+  console.log(`Executing query: ${query}`);
+  console.log(`With params:`, params);
 
-  db.execute(query, (err, results) => {
+  db.execute(query, params, (err, results) => {
     if (err) {
-      console.error("Error fetching orders:", err);
+      console.error("❌ Error fetching orders:", err);
       return res.status(500).json({
         success: false,
         message: "Error fetching orders",
+        error: err.message,
       });
     }
-    res.json(results);
+
+    console.log(`✅ Found ${results.length} orders`);
+
+    if (results.length > 0) {
+      console.log(`Sample order data:`, {
+        id: results[0].id,
+        total: results[0].total,
+        branch: results[0].branch,
+        created_at: results[0].created_at,
+        paidAmount: results[0].paidAmount,
+      });
+      
+      // Log all unique branches found
+      const branchesFound = [...new Set(results.map(order => order.branch || "main"))];
+      console.log(`Branches found in results: ${branchesFound.join(", ")}`);
+    }
+
+    // Ensure each order has total field
+    const formattedResults = results.map((order) => ({
+      ...order,
+      total: parseFloat(order.total) || parseFloat(order.paidAmount) || 0,
+      paidAmount: parseFloat(order.paidAmount) || 0,
+      changeAmount: parseFloat(order.changeAmount) || 0,
+      discountApplied: order.discountApplied || 0,
+      is_void: order.is_void || 0,
+    }));
+
+    res.json(formattedResults);
   });
 });
 
-// VOID ORDER ENDPOINT
-app.put("/orders/:id/void", (req, res) => {
+// Void order - only if it belongs to user's branch
+app.put("/orders/:id/void", requireUserBranch, (req, res) => {
   const { id } = req.params;
   const { is_void, void_reason, voided_by, voided_at } = req.body;
+  const userBranch = req.user.branch;
 
   console.log("=== BACKEND: VOIDING ORDER ===");
   console.log("Order ID:", id);
+  console.log("User branch:", userBranch);
   console.log("Void data:", req.body);
 
   if (!void_reason) {
@@ -487,7 +1316,7 @@ app.put("/orders/:id/void", (req, res) => {
         voided_by = ?, 
         voided_at = ?,
         updated_at = NOW()
-    WHERE id = ?
+    WHERE id = ? AND branch = ?
   `;
 
   const values = [
@@ -496,6 +1325,7 @@ app.put("/orders/:id/void", (req, res) => {
     voided_by || "Admin",
     voided_at || new Date().toISOString().slice(0, 19).replace("T", " "),
     id,
+    userBranch,
   ];
 
   db.execute(query, values, (err, results) => {
@@ -511,14 +1341,11 @@ app.put("/orders/:id/void", (req, res) => {
     if (results.affectedRows === 0) {
       return res.status(404).json({
         success: false,
-        message: "Order not found",
+        message: "Order not found or you don't have permission to void it",
       });
     }
 
     console.log("✅ ORDER VOIDED SUCCESSFULLY!");
-    console.log("Order ID:", id);
-    console.log("Void Reason:", void_reason);
-
     res.json({
       success: true,
       message: "Order voided successfully",
@@ -527,9 +1354,9 @@ app.put("/orders/:id/void", (req, res) => {
   });
 });
 
-app.post("/orders", (req, res) => {
+// Create order - automatically uses user's branch
+app.post("/orders", requireUserBranch, (req, res) => {
   console.log("=== BACKEND: RECEIVING ORDER ===");
-  console.log("Full request body:", JSON.stringify(req.body, null, 2));
 
   const {
     userId,
@@ -542,16 +1369,16 @@ app.post("/orders", (req, res) => {
     items,
     paymentMethod,
   } = req.body;
+  const userBranch = req.user.branch;
 
+  console.log("User branch:", userBranch);
   console.log("Payment Method received:", paymentMethod);
 
-  // Validation
-  if (!userId || paidAmount === undefined || paidAmount === null) {
+  if (!userId || paidAmount === undefined) {
     console.error("Missing required fields: userId or paidAmount");
     return res.status(400).json({
       success: false,
       message: "Invalid order data: userId and paidAmount are required",
-      received: req.body,
     });
   }
 
@@ -560,9 +1387,6 @@ app.post("/orders", (req, res) => {
     ? paymentMethod
     : "Cash";
 
-  console.log("Final paymentMethod to save:", finalPaymentMethod);
-
-  // Handle items - ensure it's a JSON string
   let itemsString;
   try {
     if (typeof items === "string") {
@@ -579,277 +1403,67 @@ app.post("/orders", (req, res) => {
     itemsString = "[]";
   }
 
-  // FIXED: First, check if the orders table has voided_by_id column
-  const checkTableQuery = `
-    SELECT COLUMN_NAME 
-    FROM INFORMATION_SCHEMA.COLUMNS 
-    WHERE TABLE_SCHEMA = 'db' 
-      AND TABLE_NAME = 'orders' 
-      AND COLUMN_NAME = 'voided_by_id'
+  const query = `
+    INSERT INTO orders 
+    (userId, paidAmount, total, discountApplied, changeAmount, orderType, 
+     productNames, items, payment_method, branch)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `;
 
-  db.execute(checkTableQuery, (checkErr, checkResults) => {
-    if (checkErr) {
-      console.error("Error checking table structure:", checkErr);
-      // Proceed with basic insert without voided_by_id
-      insertOrder(false);
-    } else {
-      // If column exists, include it with NULL
-      const hasVoidedById = checkResults.length > 0;
-      insertOrder(hasVoidedById);
-    }
-  });
+  const values = [
+    parseInt(userId) || 0,
+    parseFloat(paidAmount) || 0,
+    parseFloat(total) || 0,
+    discountApplied ? 1 : 0,
+    parseFloat(changeAmount) || 0,
+    orderType || "Dine In",
+    productNames || "No items",
+    itemsString,
+    finalPaymentMethod,
+    userBranch,
+  ];
 
-  function insertOrder(includeVoidedById) {
-    // Build dynamic query based on table structure
-    let query;
-    let values;
+  console.log("Using query:", query);
+  console.log("SQL values:", values);
 
-    if (includeVoidedById) {
-      query = `
-        INSERT INTO orders 
-        (userId, paidAmount, total, discountApplied, changeAmount, orderType, 
-         productNames, items, payment_method, voided_by_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `;
-      values = [
-        parseInt(userId) || 0,
-        parseFloat(paidAmount) || 0,
-        parseFloat(total) || 0,
-        discountApplied ? 1 : 0,
-        parseFloat(changeAmount) || 0,
-        orderType || "Dine In",
-        productNames || "No items",
-        itemsString,
-        finalPaymentMethod,
-        null, // voided_by_id
-      ];
-    } else {
-      // If voided_by_id doesn't exist, use simpler query
-      query = `
-        INSERT INTO orders 
-        (userId, paidAmount, total, discountApplied, changeAmount, orderType, 
-         productNames, items, payment_method)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `;
-      values = [
-        parseInt(userId) || 0,
-        parseFloat(paidAmount) || 0,
-        parseFloat(total) || 0,
-        discountApplied ? 1 : 0,
-        parseFloat(changeAmount) || 0,
-        orderType || "Dine In",
-        productNames || "No items",
-        itemsString,
-        finalPaymentMethod,
-      ];
-    }
-
-    console.log("Using query:", query);
-    console.log("SQL values:", values);
-
-    db.query(query, values, (err, result) => {
-      if (err) {
-        console.error("❌ FAILED TO SAVE ORDER:");
-        console.error("SQL Error:", err.code);
-        console.error("SQL Message:", err.sqlMessage);
-        console.error("Full error:", err);
-
-        // Try alternative: Remove foreign key constraint temporarily
-        if (err.code === "ER_NO_REFERENCED_ROW_2" || err.errno === 1452) {
-          console.log("⚠️ Foreign key constraint error detected.");
-          console.log("Trying alternative insert...");
-          insertOrderWithFallback();
-          return;
-        }
-
-        return res.status(500).json({
-          success: false,
-          message: "Failed to save order to database",
-          error: err.message,
-          sqlError: err.sqlMessage,
-        });
-      }
-
-      console.log("✅ ORDER SAVED SUCCESSFULLY!");
-      console.log("Order ID:", result.insertId);
-      console.log("Payment Method Saved:", finalPaymentMethod);
-
-      res.status(200).json({
-        success: true,
-        message: "Order saved successfully",
-        orderId: result.insertId,
-        paymentMethod: finalPaymentMethod,
-      });
-    });
-  }
-
-  function insertOrderWithFallback() {
-    // Try with simpler query that excludes problematic columns
-    const fallbackQuery = `
-      INSERT INTO orders 
-      (userId, paidAmount, total, discountApplied, changeAmount, orderType, 
-       productNames, items, payment_method)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `;
-
-    const fallbackValues = [
-      parseInt(userId) || 0,
-      parseFloat(paidAmount) || 0,
-      parseFloat(total) || 0,
-      discountApplied ? 1 : 0,
-      parseFloat(changeAmount) || 0,
-      orderType || "Dine In",
-      productNames || "No items",
-      itemsString,
-      finalPaymentMethod,
-    ];
-
-    console.log("Trying fallback query:", fallbackQuery);
-    console.log("Fallback values:", fallbackValues);
-
-    db.query(fallbackQuery, fallbackValues, (fallbackErr, fallbackResult) => {
-      if (fallbackErr) {
-        console.error("❌ FALLBACK ALSO FAILED:");
-        console.error("SQL Error:", fallbackErr.code);
-        console.error("SQL Message:", fallbackErr.sqlMessage);
-
-        // Last resort: Try without foreign key constraints
-        const emergencyQuery = `
-          INSERT INTO orders 
-          (userId, paidAmount, total, orderType, productNames, items)
-          VALUES (?, ?, ?, ?, ?, ?)
-        `;
-
-        const emergencyValues = [
-          parseInt(userId) || 0,
-          parseFloat(paidAmount) || 0,
-          parseFloat(total) || 0,
-          orderType || "Dine In",
-          productNames || "No items",
-          itemsString,
-        ];
-
-        db.query(
-          emergencyQuery,
-          emergencyValues,
-          (emergencyErr, emergencyResult) => {
-            if (emergencyErr) {
-              console.error("❌ EMERGENCY INSERT FAILED TOO!");
-              return res.status(500).json({
-                success: false,
-                message:
-                  "Database error. Please check your orders table structure.",
-                error: emergencyErr.message,
-              });
-            }
-
-            console.log("⚠️ ORDER SAVED WITH EMERGENCY QUERY");
-            res.status(200).json({
-              success: true,
-              message: "Order saved (with limited fields)",
-              orderId: emergencyResult.insertId,
-            });
-          }
-        );
-        return;
-      }
-
-      console.log("✅ ORDER SAVED WITH FALLBACK QUERY!");
-      res.status(200).json({
-        success: true,
-        message: "Order saved successfully",
-        orderId: fallbackResult.insertId,
-        paymentMethod: finalPaymentMethod,
-      });
-    });
-  }
-});
-
-// ------------------ STORE HOURS ------------------
-app.post("/store-hours/log-store-action", async (req, res) => {
-  try {
-    const { userId, userEmail, action } = req.body;
-
-    if (!userId || !userEmail || !action) {
-      return res.status(400).json({
-        error: "Missing required fields: userId, userEmail, action",
+  db.query(query, values, (err, result) => {
+    if (err) {
+      console.error("❌ FAILED TO SAVE ORDER:", err);
+      return res.status(500).json({
+        success: false,
+        message: "Failed to save order to database",
+        error: err.message,
       });
     }
 
-    if (!["open", "close"].includes(action)) {
-      return res
-        .status(400)
-        .json({ error: 'Invalid action. Must be "open" or "close"' });
-    }
+    console.log("✅ ORDER SAVED SUCCESSFULLY!");
+    console.log("Order ID:", result.insertId);
+    console.log("Branch:", userBranch);
 
-    const query = `
-      INSERT INTO store_hours_logs (user_id, user_email, action) 
-      VALUES (?, ?, ?)
-    `;
-
-    db.query(query, [userId, userEmail, action], (err, result) => {
-      if (err) {
-        console.error("Error logging store action:", err);
-        return res.status(500).json({ error: "Internal server error" });
-      }
-
-      res.json({
-        success: true,
-        message: `Store ${action} logged successfully`,
-        logId: result.insertId,
-        timestamp: new Date().toISOString(),
-      });
+    res.status(200).json({
+      success: true,
+      message: "Order saved successfully",
+      orderId: result.insertId,
+      branch: userBranch,
     });
-  } catch (error) {
-    console.error("Error logging store action:", error);
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
-
-app.get("/store-hours/current-store-status", async (req, res) => {
-  try {
-    const query = `
-      SELECT * FROM store_hours_logs 
-      ORDER BY timestamp DESC 
-      LIMIT 1
-    `;
-
-    db.query(query, (err, latestLog) => {
-      if (err) {
-        console.error("Error fetching current store status:", err);
-        return res.status(500).json({ error: "Internal server error" });
-      }
-
-      res.json({
-        isOpen: latestLog.length > 0 ? latestLog[0].action === "open" : false,
-        lastAction: latestLog[0] || null,
-      });
-    });
-  } catch (error) {
-    console.error("Error fetching current store status:", error);
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
-
-// ------------------ ALL ITEMS (NO FILTER) ------------------
-app.get("/all-items", (req, res) => {
-  const query = "SELECT * FROM items ORDER BY created_at DESC";
-
-  db.execute(query, (err, results) => {
-    if (err)
-      return res.status(500).json({ success: false, message: err.message });
-    res.json(results);
   });
 });
 
-// ------------------ INVENTORY ROUTES ------------------
+// ============================
+// INVENTORY ENDPOINTS
+// ============================
 
-// GET all inventory items
-app.get("/inventory", (req, res) => {
-  const query = "SELECT * FROM inventory_items ORDER BY created_at DESC";
+// Get inventory items - automatically filtered by user's branch
+app.get("/inventory", requireUserBranch, (req, res) => {
+  const userBranch = req.user.branch;
 
-  db.execute(query, (err, results) => {
+  const query = `
+    SELECT * FROM inventory_items 
+    WHERE branch = ? 
+    ORDER BY created_at DESC
+  `;
+
+  db.execute(query, [userBranch], (err, results) => {
     if (err) {
       console.error("Error fetching inventory items:", err);
       return res.status(500).json({ success: false, message: err.message });
@@ -858,8 +1472,8 @@ app.get("/inventory", (req, res) => {
   });
 });
 
-// CREATE inventory item
-app.post("/inventory", (req, res) => {
+// Create inventory item - automatically uses user's branch
+app.post("/inventory", requireUserBranch, (req, res) => {
   const {
     product_code,
     name,
@@ -872,8 +1486,10 @@ app.post("/inventory", (req, res) => {
     price,
     total_price,
   } = req.body;
+  const userBranch = req.user.branch;
 
   console.log("=== BACKEND: CREATING INVENTORY ITEM ===");
+  console.log("User branch:", userBranch);
   console.log("Request body:", req.body);
 
   if (!product_code || !name || !unit) {
@@ -885,8 +1501,8 @@ app.post("/inventory", (req, res) => {
 
   const query = `
     INSERT INTO inventory_items 
-    (product_code, name, category, description, unit, current_stock, min_stock, supplier, price, total_price)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    (product_code, name, category, description, unit, current_stock, min_stock, supplier, price, total_price, branch)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `;
 
   db.execute(
@@ -902,6 +1518,7 @@ app.post("/inventory", (req, res) => {
       supplier || "",
       price || 0,
       total_price || 0,
+      userBranch,
     ],
     (err, results) => {
       if (err) {
@@ -910,49 +1527,18 @@ app.post("/inventory", (req, res) => {
       }
 
       console.log("✅ INVENTORY ITEM CREATED SUCCESSFULLY!");
-
       res.status(201).json({
         success: true,
         id: results.insertId,
         message: "Inventory item created successfully",
+        branch: userBranch,
       });
     }
   );
 });
 
-// GET single inventory item by ID
-app.get("/inventory/:id", (req, res) => {
-  const { id } = req.params;
-
-  console.log("=== BACKEND: FETCHING SINGLE INVENTORY ITEM ===");
-  console.log("Inventory ID:", id);
-
-  const query = "SELECT * FROM inventory_items WHERE id = ?";
-
-  db.execute(query, [id], (err, results) => {
-    if (err) {
-      console.error("Error fetching inventory item:", err);
-      return res.status(500).json({ success: false, message: err.message });
-    }
-
-    if (results.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: "Inventory item not found",
-      });
-    }
-
-    console.log("✅ INVENTORY ITEM FETCHED SUCCESSFULLY!");
-
-    res.json({
-      success: true,
-      data: results[0],
-    });
-  });
-});
-
-// UPDATE inventory item - SINGLE VERSION (REMOVED DUPLICATE)
-app.put("/inventory/:id", (req, res) => {
+// Update inventory item - only if it belongs to user's branch
+app.put("/inventory/:id", requireUserBranch, (req, res) => {
   const { id } = req.params;
   const {
     product_code,
@@ -966,9 +1552,11 @@ app.put("/inventory/:id", (req, res) => {
     price,
     total_price,
   } = req.body;
+  const userBranch = req.user.branch;
 
   console.log("=== BACKEND: UPDATING INVENTORY ITEM ===");
   console.log("Inventory ID:", id);
+  console.log("User branch:", userBranch);
   console.log("Request body:", req.body);
 
   if (!product_code || !name || !unit) {
@@ -982,7 +1570,7 @@ app.put("/inventory/:id", (req, res) => {
     UPDATE inventory_items 
     SET product_code=?, name=?, category=?, description=?, unit=?, 
         current_stock=?, min_stock=?, supplier=?, price=?, total_price=?
-    WHERE id=?
+    WHERE id=? AND branch=?
   `;
 
   db.execute(
@@ -999,6 +1587,7 @@ app.put("/inventory/:id", (req, res) => {
       price || 0,
       total_price || 0,
       id,
+      userBranch,
     ],
     (err, results) => {
       if (err) {
@@ -1007,13 +1596,14 @@ app.put("/inventory/:id", (req, res) => {
       }
 
       if (results.affectedRows === 0) {
-        return res
-          .status(404)
-          .json({ success: false, message: "Inventory item not found" });
+        return res.status(404).json({
+          success: false,
+          message:
+            "Inventory item not found or you don't have permission to edit it",
+        });
       }
 
       console.log("✅ INVENTORY ITEM UPDATED SUCCESSFULLY!");
-
       res.json({
         success: true,
         message: "Inventory item updated successfully",
@@ -1022,16 +1612,18 @@ app.put("/inventory/:id", (req, res) => {
   );
 });
 
-// DELETE inventory item
-app.delete("/inventory/:id", (req, res) => {
+// Delete inventory item - only if it belongs to user's branch
+app.delete("/inventory/:id", requireUserBranch, (req, res) => {
   const { id } = req.params;
+  const userBranch = req.user.branch;
 
   console.log("=== BACKEND: DELETING INVENTORY ITEM ===");
   console.log("Inventory ID to delete:", id);
+  console.log("User branch:", userBranch);
 
   db.execute(
-    "DELETE FROM inventory_items WHERE id = ?",
-    [id],
+    "DELETE FROM inventory_items WHERE id = ? AND branch = ?",
+    [id, userBranch],
     (err, results) => {
       if (err) {
         console.error("Error deleting inventory item:", err);
@@ -1041,12 +1633,12 @@ app.delete("/inventory/:id", (req, res) => {
       if (results.affectedRows === 0) {
         return res.status(404).json({
           success: false,
-          message: "Inventory item not found",
+          message:
+            "Inventory item not found or you don't have permission to delete it",
         });
       }
 
       console.log("✅ INVENTORY ITEM DELETED SUCCESSFULLY!");
-
       res.json({
         success: true,
         message: "Inventory item deleted successfully",
@@ -1055,44 +1647,203 @@ app.delete("/inventory/:id", (req, res) => {
   );
 });
 
-// ------------------ Test ------------------
+// ============================
+// STORE HOURS LOGS (For Cashier Reports)
+// ============================
+
+// Get store hours logs - automatically filtered by user's branch
+app.get("/store-hours-logs", requireUserBranch, (req, res) => {
+  const userBranch = req.user.branch;
+
+  const query = `
+    SELECT 
+      s.*,
+      u.email as user_email
+    FROM store_status_log s
+    LEFT JOIN users u ON s.user_id = u.id
+    WHERE s.branch = ?
+    ORDER BY s.timestamp DESC
+  `;
+
+  db.execute(query, [userBranch], (err, results) => {
+    if (err) {
+      console.error("Error fetching store hours logs:", err);
+      return res.status(500).json({
+        success: false,
+        message: "Error fetching store hours logs",
+      });
+    }
+    res.json(results);
+  });
+});
+
+// ============================
+// ADMIN-ONLY ENDPOINTS (Cross-branch access)
+// ============================
+// ============================
+// ADMIN: GET ALL STORE HOURS LOGS (Cross-branch)
+// ============================
+app.get("/admin/all-store-hours-logs", (req, res) => {
+  // Check if user is admin/owner
+  if (!req.user || (req.user.role !== "admin" && req.user.role !== "owner")) {
+    return res.status(403).json({
+      success: false,
+      message: "Admin/Owner access required",
+    });
+  }
+
+  const query = `
+    SELECT 
+      s.*,
+      u.email as user_email
+    FROM store_status_log s
+    LEFT JOIN users u ON s.user_id = u.id
+    ORDER BY s.timestamp DESC
+  `;
+
+  db.execute(query, (err, results) => {
+    if (err) {
+      console.error("Error fetching all store hours logs:", err);
+      return res.status(500).json({
+        success: false,
+        message: "Error fetching all store hours logs",
+      });
+    }
+    res.json(results);
+  });
+});
+
+// Get all data across all branches (ADMIN ONLY)
+// Sa /admin/all-items endpoint
+app.get("/admin/all-items", (req, res) => {
+  // BAGO: Tanggapin ang parehong "admin" at "owner" na roles
+  if (!req.user || (req.user.role !== "admin" && req.user.role !== "owner")) {
+    return res.status(403).json({
+      success: false,
+      message: "Admin/Owner access required",
+    });
+  }
+
+  db.execute(
+    "SELECT * FROM items ORDER BY branch, created_at DESC",
+    (err, results) => {
+      if (err)
+        return res.status(500).json({ success: false, message: err.message });
+      res.json(results);
+    }
+  );
+});
+
+app.get("/admin/all-orders", (req, res) => {
+  // BAGO: Accept both "admin" and "owner" roles
+  if (!req.user || (req.user.role !== "admin" && req.user.role !== "owner")) {
+    return res.status(403).json({
+      success: false,
+      message: "Admin/Owner access required",
+    });
+  }
+
+  console.log(`=== ADMIN FETCHING ALL ORDERS ===`);
+  console.log(`Admin user:`, req.user.email);
+  console.log(`Admin role:`, req.user.role);
+
+  const query = `
+    SELECT 
+      o.*,
+      u.email as cashier
+    FROM orders o
+    LEFT JOIN users u ON o.userId = u.id
+    ORDER BY o.created_at DESC
+  `;
+
+  db.execute(query, (err, results) => {
+    if (err) {
+      console.error("❌ Error fetching all orders:", err);
+      return res.status(500).json({
+        success: false,
+        message: "Error fetching orders",
+      });
+    }
+
+    console.log(
+      `✅ Admin found ${results.length} total orders across all branches`
+    );
+
+    const formattedResults = results.map((order) => ({
+      ...order,
+      total: parseFloat(order.total) || parseFloat(order.paidAmount) || 0,
+      paidAmount: parseFloat(order.paidAmount) || 0,
+    }));
+
+    res.json(formattedResults);
+  });
+});
+
+app.get("/admin/all-inventory", (req, res) => {
+  if (!req.user || req.user.role !== "admin") {
+    return res.status(403).json({
+      success: false,
+      message: "Admin access required",
+    });
+  }
+
+  db.execute(
+    "SELECT * FROM inventory_items ORDER BY branch, created_at DESC",
+    (err, results) => {
+      if (err) {
+        console.error("Error fetching all inventory items:", err);
+        return res.status(500).json({ success: false, message: err.message });
+      }
+      res.json(results);
+    }
+  );
+});
+
+// ============================
+// TEST ENDPOINT
+// ============================
+
 app.get("/", (req, res) => {
   res.json({
     message: "Backend is running!",
-    endpoints: {
-      auth: {
-        register: "POST /register",
-        login: "POST /login",
-      },
-      users: "GET /users",
-      announcements: {
-        get: "GET /announcements",
-        create: "POST /announcements",
-        update: "PUT /announcements/:id",
-        delete: "DELETE /announcements/:id",
-      },
-      items: {
-        get: "GET /items",
-        create: "POST /items",
-        update: "PUT /items/:id",
-        delete: "DELETE /items/:id",
-      },
-      inventory: {
-        get: "GET /inventory",
-        create: "POST /inventory",
-        update: "PUT /inventory/:id",
-        delete: "DELETE /inventory/:id",
-      },
-      orders: {
-        get: "GET /orders",
-        create: "POST /orders",
-        void: "PUT /orders/:id/void",
-      },
-      storeHours: {
-        logAction: "POST /store-hours/log-store-action",
-        getStatus: "GET /store-hours/current-store-status",
+    features: {
+      branch_filtering: "Automatic branch-based data filtering enabled",
+      user_authentication: "User info required from headers",
+      endpoints: {
+        auth: {
+          register: "POST /register",
+          login: "POST /login",
+        },
+        store_hours: {
+          current_status: "GET /store-hours/current-store-status",
+          log_action: "POST /store-hours/log-store-action",
+          logs: "GET /store-hours-logs",
+        },
+        items: "GET /items (branch-filtered)",
+        orders: "GET /orders (branch-filtered)",
+        inventory: "GET /inventory (branch-filtered)",
+        announcements: "GET /announcements (branch-filtered)",
+        users: "GET /users",
+        admin: {
+          all_items: "GET /admin/all-items",
+          all_orders: "GET /admin/all-orders",
+          all_inventory: "GET /admin/all-inventory",
+        },
       },
     },
+    note: "All data endpoints automatically filter by user's branch. Send user info in 'user' header as JSON string.",
+  });
+});
+
+// ============================
+// ERROR HANDLING
+// ============================
+
+// 404 handler
+app.use((req, res, next) => {
+  res.status(404).json({
+    success: false,
+    message: `Endpoint ${req.method} ${req.url} not found`,
   });
 });
 
@@ -1102,11 +1853,14 @@ app.use((err, req, res, next) => {
   res.status(500).json({
     success: false,
     message: "Internal server error",
-    error: err.message,
+    error: process.env.NODE_ENV === "development" ? err.message : undefined,
   });
 });
 
-// Start server
+// ============================
+// START SERVER
+// ============================
+
 app.listen(PORT, () =>
   console.log(`Server running on http://localhost:${PORT}`)
 );
