@@ -95,13 +95,22 @@ const addBranchToQuery = (baseQuery, userBranch, tableAlias = "") => {
 // ============================
 app.post("/register", async (req, res) => {
   try {
-    const { email, username, password, confirmPassword, role, status, branch } =
-      req.body;
+    const {
+      email,
+      username,
+      password,
+      confirmPassword,
+      role,
+      status,
+      branch,
+      void_pin,
+    } = req.body;
 
     console.log("=== REGISTER REQUEST ===");
-    console.log("Role from frontend:", role);
+    console.log("Role:", role);
+    console.log("Void PIN provided:", void_pin);
 
-    // BAGUHIN: Validation
+    // Validation
     if (!email || !password || !confirmPassword) {
       return res.status(400).json({
         success: false,
@@ -121,6 +130,16 @@ app.post("/register", async (req, res) => {
         success: false,
         message: "Password must be at least 6 characters",
       });
+    }
+
+    // For Manager/Owner: Validate void_pin length
+    if ((role === "manager" || role === "admin") && void_pin) {
+      if (void_pin.length < 4 || void_pin.length > 6) {
+        return res.status(400).json({
+          success: false,
+          message: "Void PIN must be 4-6 digits",
+        });
+      }
     }
 
     // Check if email already exists
@@ -145,25 +164,30 @@ app.post("/register", async (req, res) => {
 
         const hashedPassword = await bcrypt.hash(password, 10);
 
-        // BAGUHIN: Role conversion for registration
-        let dbRole = role || "cashier";
-
-        // IMPORTANT: "admin" in frontend = "owner" in database
-        if (dbRole === "admin") {
-          dbRole = "owner";
-          console.log("Register: Converting 'admin' to 'owner' for database");
+        // Hash the void PIN if provided
+        let hashedVoidPin = null;
+        if (void_pin && void_pin.length >= 4) {
+          hashedVoidPin = await bcrypt.hash(void_pin, 10);
+          console.log("Hashed Void PIN for:", email);
         }
 
-        console.log("Final DB Role:", dbRole);
+        // IMPORTANT: "admin" in frontend = "owner" in database
+        let dbRole = role || "cashier";
+        if (dbRole === "admin") {
+          dbRole = "owner";
+        }
 
-        const userStatus = status || "Active";
-        const userBranch = branch || "main";
-
-        // BAGUHIN: Use email as username if not provided
+        // Set username if not provided
         const finalUsername = username || email.split("@")[0];
 
+        // Set default status
+        const userStatus = status || "Active";
+
+        // Set default branch
+        const userBranch = branch || "main";
+
         db.execute(
-          "INSERT INTO users (email, username, password, role, status, branch) VALUES (?, ?, ?, ?, ?, ?)",
+          "INSERT INTO users (email, username, password, role, status, branch, void_pin) VALUES (?, ?, ?, ?, ?, ?, ?)",
           [
             email,
             finalUsername,
@@ -171,6 +195,7 @@ app.post("/register", async (req, res) => {
             dbRole,
             userStatus,
             userBranch,
+            hashedVoidPin,
           ],
           (err, results) => {
             if (err) {
@@ -180,12 +205,18 @@ app.post("/register", async (req, res) => {
                 message: "Error creating account: " + err.message,
               });
             }
+
+            console.log("✅ Account created successfully:", {
+              email: email,
+              role: dbRole,
+              hasVoidPin: !!hashedVoidPin,
+            });
+
             res.status(201).json({
               success: true,
               message: "Account created successfully",
               userId: results.insertId,
-              role: role, // Return frontend role
-              dbRole: dbRole, // For debugging
+              role: role,
             });
           }
         );
@@ -388,7 +419,7 @@ app.post("/store-hours/log-store-action", requireUserBranch, (req, res) => {
 app.get("/users", (req, res) => {
   if (req.user && (req.user.role === "admin" || req.user.role === "owner")) {
     db.execute(
-      "SELECT id, email, username, role, status, branch, created_at FROM users ORDER BY created_at DESC",
+      "SELECT id, email, username, role, status, branch, created_at, void_pin FROM users ORDER BY created_at DESC", // ADD void_pin
       (err, results) => {
         if (err)
           return res.status(500).json({ success: false, message: err.message });
@@ -398,17 +429,19 @@ app.get("/users", (req, res) => {
           ...user,
           // IMPORTANT: Sa database "owner" = sa frontend "admin"
           role: user.role === "owner" ? "admin" : user.role,
+          // Keep void_pin as is
+          void_pin: user.void_pin,
         }));
 
         console.log("Users fetched:", convertedResults.length);
         console.log("Sample user:", convertedResults[0]);
-        
+
         res.json(convertedResults);
       }
     );
   } else if (req.user && req.user.branch) {
     db.execute(
-      "SELECT id, email, username, role, status, branch, created_at FROM users WHERE branch = ? ORDER BY created_at DESC",
+      "SELECT id, email, username, role, status, branch, created_at, void_pin FROM users WHERE branch = ? ORDER BY created_at DESC", // ADD void_pin
       [req.user.branch],
       (err, results) => {
         if (err)
@@ -418,6 +451,7 @@ app.get("/users", (req, res) => {
         const convertedResults = results.map((user) => ({
           ...user,
           role: user.role === "owner" ? "admin" : user.role,
+          void_pin: user.void_pin,
         }));
 
         res.json(convertedResults);
@@ -431,41 +465,27 @@ app.get("/users", (req, res) => {
   }
 });
 
-app.put("/users/:id", requireUserBranch, (req, res) => {
-  const { id } = req.params;
-  const { email, username, role, status, branch } = req.body;
-  const userBranch = req.user.branch;
+// ============================
+// VOID PIN VERIFICATION (For Order Voiding)
+// ============================
 
-  console.log("📝 UPDATE USER - Role:", role);
+// Verify any manager/admin Void PIN without requiring specific user ID
+app.post("/users/verify-manager-pin", requireUserBranch, async (req, res) => {
+  const { void_pin } = req.body;
 
-  // Validate role is one of the allowed values
-  const allowedRoles = ["cashier", "manager", "admin"];
-  if (!allowedRoles.includes(role)) {
+  if (!void_pin) {
     return res.status(400).json({
       success: false,
-      message: "Invalid role. Must be cashier, manager, or admin",
+      message: "Void PIN is required",
     });
   }
 
-  // DIRECT SAVE - walang conversion
-  const dbRole = role;
+  console.log("Verifying manager PIN for order voiding...");
 
-  const isAdmin = req.user.role === "admin";
-
-  let query;
-  let params;
-
-  if (isAdmin) {
-    query =
-      "UPDATE users SET email = ?, role = ?, status = ?, branch = ? WHERE id = ?";
-    params = [email, dbRole, status, branch, id];
-  } else {
-    query =
-      "UPDATE users SET email = ?, role = ?, status = ? WHERE id = ? AND branch = ?";
-    params = [email, dbRole, status, id, userBranch];
-  }
-
-  db.execute(query, params, (err, result) => {
+  // Get all manager/admin users with void PIN
+  const query = "SELECT id, email, role, void_pin FROM users WHERE (role = 'manager' OR role = 'owner') AND void_pin IS NOT NULL";
+  
+  db.execute(query, async (err, results) => {
     if (err) {
       console.error("Database error:", err);
       return res.status(500).json({
@@ -474,19 +494,210 @@ app.put("/users/:id", requireUserBranch, (req, res) => {
       });
     }
 
-    if (result.affectedRows === 0) {
+    if (results.length === 0) {
       return res.status(404).json({
         success: false,
-        message: "User not found",
+        message: "No Manager/Owner accounts found with Void PIN",
       });
     }
 
+    // Try to match the PIN with any manager/admin
+    let matchedUser = null;
+    
+    for (const user of results) {
+      try {
+        const isMatch = await bcrypt.compare(void_pin, user.void_pin);
+        if (isMatch) {
+          matchedUser = {
+            id: user.id,
+            email: user.email,
+            role: user.role === "owner" ? "admin" : user.role
+          };
+          break;
+        }
+      } catch (error) {
+        console.error("Error comparing PIN for user:", user.email, error);
+        continue;
+      }
+    }
+
+    if (matchedUser) {
+      res.json({
+        success: true,
+        message: "Void PIN verified successfully",
+        authorized_by: matchedUser,
+        timestamp: new Date().toISOString()
+      });
+    } else {
+      res.status(401).json({
+        success: false,
+        message: "Invalid Void PIN. Please try again.",
+      });
+    }
+  });
+});
+
+// Check if there are any managers/admins with Void PIN
+app.get("/users/check-manager-pin-available", requireUserBranch, (req, res) => {
+  const query = "SELECT COUNT(*) as count FROM users WHERE (role = 'manager' OR role = 'owner') AND void_pin IS NOT NULL";
+  
+  db.execute(query, (err, results) => {
+    if (err) {
+      return res.status(500).json({
+        success: false,
+        message: "Database error",
+      });
+    }
+
+    const count = results[0]?.count || 0;
+    
     res.json({
       success: true,
-      message: "User updated successfully",
+      has_manager_with_pin: count > 0,
+      count: count
     });
   });
 });
+
+app.post("/register", async (req, res) => {
+  try {
+    const {
+      email,
+      username,
+      password,
+      confirmPassword,
+      role,
+      status,
+      branch,
+      void_pin,
+    } = req.body;
+
+    console.log("=== REGISTER REQUEST ===");
+    console.log("Role:", role);
+    console.log("Void PIN provided:", void_pin);
+
+    // Validation
+    if (!email || !password || !confirmPassword) {
+      return res.status(400).json({
+        success: false,
+        message: "Email and password are required",
+      });
+    }
+
+    if (password !== confirmPassword) {
+      return res.status(400).json({
+        success: false,
+        message: "Passwords do not match",
+      });
+    }
+
+    if (password.length < 6) {
+      return res.status(400).json({
+        success: false,
+        message: "Password must be at least 6 characters",
+      });
+    }
+
+    // For Manager/Owner: Validate void_pin length
+    if ((role === "manager" || role === "admin") && void_pin) {
+      if (void_pin.length < 4 || void_pin.length > 6) {
+        return res.status(400).json({
+          success: false,
+          message: "Void PIN must be 4-6 digits",
+        });
+      }
+    }
+
+    // Check if email already exists
+    db.execute(
+      "SELECT * FROM users WHERE email = ?",
+      [email],
+      async (err, results) => {
+        if (err) {
+          console.error("Database error:", err);
+          return res.status(500).json({
+            success: false,
+            message: "Server error",
+          });
+        }
+
+        if (results.some((user) => user.email === email)) {
+          return res.status(400).json({
+            success: false,
+            message: "Email already exists",
+          });
+        }
+
+        const hashedPassword = await bcrypt.hash(password, 10);
+
+        // Hash the void PIN if provided
+        let hashedVoidPin = null;
+        if (void_pin && void_pin.length >= 4) {
+          hashedVoidPin = await bcrypt.hash(void_pin, 10);
+          console.log("Hashed Void PIN for:", email);
+        }
+
+        // IMPORTANT: "admin" in frontend = "owner" in database
+        let dbRole = role || "cashier";
+        if (dbRole === "admin") {
+          dbRole = "owner";
+        }
+
+        // Set username if not provided
+        const finalUsername = username || email.split("@")[0];
+
+        // Set default status
+        const userStatus = status || "Active";
+
+        // Set default branch
+        const userBranch = branch || "main";
+
+        db.execute(
+          "INSERT INTO users (email, username, password, role, status, branch, void_pin) VALUES (?, ?, ?, ?, ?, ?, ?)",
+          [
+            email,
+            finalUsername,
+            hashedPassword,
+            dbRole,
+            userStatus,
+            userBranch,
+            hashedVoidPin,
+          ],
+          (err, results) => {
+            if (err) {
+              console.error("Error creating account:", err);
+              return res.status(500).json({
+                success: false,
+                message: "Error creating account: " + err.message,
+              });
+            }
+
+            console.log("✅ Account created successfully:", {
+              email: email,
+              role: dbRole,
+              hasVoidPin: !!hashedVoidPin,
+            });
+
+            res.status(201).json({
+              success: true,
+              message: "Account created successfully",
+              userId: results.insertId,
+              role: role,
+            });
+          }
+        );
+      }
+    );
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
+});
+
+
 
 app.delete("/users/:id", requireUserBranch, (req, res) => {
   const { id } = req.params;
@@ -508,6 +719,116 @@ app.delete("/users/:id", requireUserBranch, (req, res) => {
     if (err)
       return res.status(500).json({ success: false, message: err.message });
     res.json({ success: true, message: "User deleted" });
+  });
+});
+
+// ============================
+// VOID PIN VERIFICATION
+// ============================
+
+// Verify Void PIN for a user
+app.post("/users/:id/verify-void-pin", requireUserBranch, async (req, res) => {
+  const { id } = req.params;
+  const { void_pin } = req.body;
+  const userBranch = req.user.branch;
+
+  if (!void_pin) {
+    return res.status(400).json({
+      success: false,
+      message: "Void PIN is required",
+    });
+  }
+
+  // First, check if the requesting user has permission
+  if (req.user.role !== "admin" && req.user.role !== "owner" && req.user.role !== "manager") {
+    return res.status(403).json({
+      success: false,
+      message: "You don't have permission to verify Void PIN",
+    });
+  }
+
+  // Get the user's stored void PIN
+  const query = "SELECT void_pin, role FROM users WHERE id = ?";
+  
+  db.execute(query, [id], async (err, results) => {
+    if (err) {
+      return res.status(500).json({
+        success: false,
+        message: "Database error",
+      });
+    }
+
+    if (results.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    const user = results[0];
+    
+    // Check if user has a Void PIN set
+    if (!user.void_pin) {
+      return res.status(400).json({
+        success: false,
+        message: "User does not have a Void PIN set",
+      });
+    }
+
+    // Verify the PIN
+    try {
+      const isMatch = await bcrypt.compare(void_pin, user.void_pin);
+      
+      if (isMatch) {
+        res.json({
+          success: true,
+          message: "Void PIN verified successfully",
+          role: user.role,
+        });
+      } else {
+        res.status(401).json({
+          success: false,
+          message: "Invalid Void PIN",
+        });
+      }
+    } catch (error) {
+      console.error("Error verifying Void PIN:", error);
+      res.status(500).json({
+        success: false,
+        message: "Error verifying Void PIN",
+      });
+    }
+  });
+});
+
+// Check if user has Void PIN
+app.get("/users/:id/has-void-pin", requireUserBranch, (req, res) => {
+  const { id } = req.params;
+
+  const query = "SELECT void_pin, role FROM users WHERE id = ?";
+  
+  db.execute(query, [id], (err, results) => {
+    if (err) {
+      return res.status(500).json({
+        success: false,
+        message: "Database error",
+      });
+    }
+
+    if (results.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    const user = results[0];
+    
+    res.json({
+      success: true,
+      has_void_pin: !!user.void_pin,
+      role: user.role,
+    });
   });
 });
 
@@ -867,6 +1188,116 @@ app.delete("/announcements/:id", requireUserBranch, (req, res) => {
         was_global: announcement.is_global
       });
     });
+  });
+});
+
+// ============================
+// INVENTORY TOTAL VALUE ENDPOINT
+// ============================
+
+// Sa server-side code, i-update ang GET /inventory/total-value endpoint
+app.get("/inventory/total-value", requireUserBranch, (req, res) => {
+  const userBranch = req.user.branch;
+  const { branch } = req.query;
+
+  console.log("=== FETCHING INVENTORY TOTAL VALUE ===");
+
+  let query;
+  let params = [];
+
+  if (branch && branch !== "all" && 
+      (req.user.role === "admin" || req.user.role === "owner")) {
+    // Query para sa specific branch (admin/owner)
+    query = `
+      SELECT 
+        IFNULL(SUM(total_price), 0) as total_value,
+        COUNT(*) as item_count
+      FROM inventory_items 
+      WHERE branch = ?
+    `;
+    params = [branch];
+  } else if (req.user.role === "admin" || req.user.role === "owner") {
+    // Query para sa lahat ng branches (admin/owner)
+    query = `
+      SELECT 
+        IFNULL(SUM(total_price), 0) as total_value,
+        COUNT(*) as item_count
+      FROM inventory_items 
+    `;
+    params = [];
+  } else {
+    // Query para sa non-admin users (own branch lang)
+    query = `
+      SELECT 
+        IFNULL(SUM(total_price), 0) as total_value,
+        COUNT(*) as item_count
+      FROM inventory_items 
+      WHERE branch = ?
+    `;
+    params = [userBranch];
+  }
+
+  console.log("Query:", query);
+  console.log("Params:", params);
+
+  db.execute(query, params, (err, results) => {
+    if (err) {
+      console.error("Error:", err);
+      return res.status(500).json({
+        success: false,
+        message: "Error fetching inventory total value",
+        error: err.message,
+      });
+    }
+
+    console.log("Result:", results[0]);
+
+    const totalValue = results[0]?.total_value || 0;
+    const itemCount = results[0]?.item_count || 0;
+
+    res.json({
+      success: true,
+      totalValue: parseFloat(totalValue),
+      itemCount: parseInt(itemCount),
+      branch: branch || userBranch,
+    });
+  });
+});
+
+// Add debug endpoint to see raw data
+app.get("/inventory/debug", requireUserBranch, (req, res) => {
+  const userBranch = req.user.branch;
+  const { branch } = req.query;
+  
+  const query = `
+    SELECT 
+      id,
+      name,
+      category,
+      price,
+      current_stock,
+      total_price,
+      (price * current_stock) as manual_calculation,
+      branch
+    FROM inventory_items 
+    WHERE branch = ?
+    ORDER BY id
+  `;
+  
+  const targetBranch = branch || userBranch;
+  
+  db.execute(query, [targetBranch], (err, results) => {
+    if (err) {
+      console.error("Error debugging inventory:", err);
+      return res.status(500).json({ error: err.message });
+    }
+    
+    console.log(`DEBUG: Found ${results.length} items for branch ${targetBranch}`);
+    results.forEach(item => {
+      console.log(`  ${item.name}: price=${item.price}, stock=${item.current_stock}, total_price=${item.total_price}, manual=${item.manual_calculation}`);
+    });
+    
+    res.json(results);
   });
 });
 
@@ -1355,6 +1786,8 @@ app.put("/orders/:id/void", requireUserBranch, (req, res) => {
 });
 
 // Create order - automatically uses user's branch
+
+ // Create order - automatically uses user's branch
 app.post("/orders", requireUserBranch, (req, res) => {
   console.log("=== BACKEND: RECEIVING ORDER ===");
 
@@ -1373,6 +1806,7 @@ app.post("/orders", requireUserBranch, (req, res) => {
 
   console.log("User branch:", userBranch);
   console.log("Payment Method received:", paymentMethod);
+  console.log("Discount applied (single field):", discountApplied);
 
   if (!userId || paidAmount === undefined) {
     console.error("Missing required fields: userId or paidAmount");
@@ -1414,7 +1848,7 @@ app.post("/orders", requireUserBranch, (req, res) => {
     parseInt(userId) || 0,
     parseFloat(paidAmount) || 0,
     parseFloat(total) || 0,
-    discountApplied ? 1 : 0,
+    discountApplied ? 1 : 0, // Ito na lang ang gamitin
     parseFloat(changeAmount) || 0,
     orderType || "Dine In",
     productNames || "No items",
@@ -1439,6 +1873,7 @@ app.post("/orders", requireUserBranch, (req, res) => {
     console.log("✅ ORDER SAVED SUCCESSFULLY!");
     console.log("Order ID:", result.insertId);
     console.log("Branch:", userBranch);
+    console.log("Discount saved (single field):", discountApplied);
 
     res.status(200).json({
       success: true,

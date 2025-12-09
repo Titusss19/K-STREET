@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import axios from "axios";
+import KSLOGO from "../assets/kslogo.png";
 
 export default function Login() {
   const [formData, setFormData] = useState({
@@ -79,11 +80,8 @@ const handleSubmit = async (e) => {
   return (
     <div className="flex min-h-screen flex-col justify-center px-6 py-12 lg:px-8 bg-gray-50">
       <div className="sm:mx-auto sm:w-full sm:max-w-sm">
-        <img
-          alt="Your Company"
-          src="https://github.com/Titusss19/K-STREET/blob/jmbranch/ssbi-white-logo.png?raw=true"
-          className="mx-auto h-30 w-auto"
-        />
+        <img src={KSLOGO} alt="K-Street Logo" className="mx-auto h-50 w-auto" />
+
         <h2 className="text-center text-2xl font-bold tracking-tight text-gray-600">
           Sign in to your account
         </h2>

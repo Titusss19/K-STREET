@@ -1028,36 +1028,7 @@ const Items = () => {
             >
               ITEM INVENTORY
             </button>
-            <button
-              onClick={() => handleReportNavigation("products")}
-              className={`px-6 py-3 rounded-lg font-semibold text-sm transition-all duration-200 ${
-                activeReport === "products"
-                  ? "bg-red-600 text-white shadow-lg transform scale-105"
-                  : "bg-white text-gray-700 hover:bg-red-50 border border-red-200"
-              }`}
-            >
-              PRODUCTS
-            </button>
-            <button
-              onClick={() => handleReportNavigation("employees")}
-              className={`px-6 py-3 rounded-lg font-semibold text-sm transition-all duration-200 ${
-                activeReport === "employees"
-                  ? "bg-red-600 text-white shadow-lg transform scale-105"
-                  : "bg-white text-gray-700 hover:bg-red-50 border border-red-200"
-              }`}
-            >
-              EMPLOYEES REPORT
-            </button>
-            <button
-              onClick={() => handleReportNavigation("time-period")}
-              className={`px-6 py-3 rounded-lg font-semibold text-sm transition-all duration-200 ${
-                activeReport === "time-period"
-                  ? "bg-red-600 text-white shadow-lg transform scale-105"
-                  : "bg-white text-gray-700 hover:bg-red-50 border border-red-200"
-              }`}
-            >
-              TIME PERIOD
-            </button>
+           
           </div>
         </div>
 

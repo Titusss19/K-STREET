@@ -458,13 +458,21 @@ const POS = () => {
     return amount > 0 ? amount - total : 0;
   };
 
-  const calculateTotal = () => {
-    const subtotal = calculateSubtotal();
-    let total = subtotal;
-    if (discountApplied) total *= 0.8;
-    if (employeeDiscountApplied) total *= 0.95;
-    return total;
-  };
+const calculateTotal = () => {
+  const subtotal = calculateSubtotal();
+  let total = subtotal;
+
+  // Parehong discount na ngayon, isang field lang
+  if (discountApplied) {
+    total *= 0.8; // 20% para sa PWD/Senior
+  }
+  if (employeeDiscountApplied) {
+    total *= 0.95; // 5% para sa Employee
+  }
+
+  return total;
+};
+
 
   const subtotal = calculateSubtotal();
   const total = calculateTotal();
@@ -636,19 +644,18 @@ Items:
         }))
       );
 
-      const orderData = {
-        userId,
-        paidAmount: amount,
-        total: currentTotal,
-        discountApplied,
-        employeeDiscountApplied,
-        changeAmount: change,
-        orderType,
-        productNames: productNames,
-        items: itemsData,
-        paymentMethod: paymentMethod,
-        branch: currentUser.branch || "main",
-      };
+const orderData = {
+  userId,
+  paidAmount: amount,
+  total: currentTotal,
+  discountApplied: discountApplied || employeeDiscountApplied, // DITO ANG BAGO - isa lang ang field
+  changeAmount: change,
+  orderType,
+  productNames: productNames,
+  items: itemsData,
+  paymentMethod: paymentMethod,
+  branch: currentUser.branch || "main",
+};
 
       console.log("Saving order for branch:", currentUser.branch);
 
@@ -676,19 +683,36 @@ Items:
     }
   };
 
-  const applyDiscount = () => {
-    if (!discountApplied && !employeeDiscountApplied) {
-      setDiscountApplied(true);
-      setEmployeeDiscountApplied(false);
-    }
-  };
+const applyDiscount = () => {
+  if (!storeOpen) {
+    alert("Store is closed");
+    return;
+  }
+  
+  // Remove employee discount if it's applied
+  if (employeeDiscountApplied) {
+    setEmployeeDiscountApplied(false);
+  }
+  
+  // Toggle PWD/Senior discount
+  setDiscountApplied(!discountApplied);
+};
 
-  const applyEmployeeDiscount = () => {
-    if (!employeeDiscountApplied && !discountApplied) {
-      setEmployeeDiscountApplied(true);
-      setDiscountApplied(false);
-    }
-  };
+const applyEmployeeDiscount = () => {
+  if (!storeOpen) {
+    alert("Store is closed");
+    return;
+  }
+  
+  // Remove PWD/Senior discount if it's applied
+  if (discountApplied) {
+    setDiscountApplied(false);
+  }
+  
+  // Toggle employee discount
+  setEmployeeDiscountApplied(!employeeDiscountApplied);
+};
+
 
   const handlePrintReceipt = () => {
     if (!receiptContent || receiptContent.trim() === "") {
@@ -759,6 +783,8 @@ Items:
       receiptText += `===============================\n`;
       receiptText += `Subtotal: P${currentSubtotal.toFixed(2)}\n`;
 
+      // Sa generateReceiptText() function, idagdag:
+      // Sa generateReceiptText() function, gawing ganito:
       if (discountApplied) {
         receiptText += `PWD/Senior Discount (20%): Applied\n`;
       }
@@ -1202,43 +1228,48 @@ Items:
               </button>
             </div>
 
+            {/* Sa POS component, update the discount buttons */}
             <div className="mb-4 grid grid-cols-2 gap-3">
               <button
                 className={`w-full py-3.5 rounded-xl font-semibold text-white transition-all shadow-lg ${
-                  discountApplied || !storeOpen
+                  discountApplied
+                    ? "bg-black text-white" // Active state
+                    : !storeOpen
                     ? "bg-gray-300 cursor-not-allowed"
                     : "bg-gradient-to-r from-black to-black hover:from-red-600 hover:to-red-600 hover:shadow-xl"
                 }`}
                 onClick={applyDiscount}
-                disabled={discountApplied || !storeOpen}
+                disabled={!storeOpen}
                 title={
                   !storeOpen
                     ? "Store is closed"
                     : discountApplied
-                    ? "Discount already applied"
+                    ? "Remove PWD/Senior discount"
                     : "Apply PWD/Senior discount (20%)"
                 }
               >
-                {discountApplied ? "PWD/Senior 20%" : "PWD/Senior 20%"}
+                {discountApplied ? "PWD/Senior 20% ✓" : "PWD/Senior 20%"}
               </button>
 
               <button
                 className={`w-full py-3.5 rounded-xl font-semibold text-white transition-all shadow-lg ${
-                  employeeDiscountApplied || !storeOpen
+                  employeeDiscountApplied
+                    ? "bg-black text-white" // Active state
+                    : !storeOpen
                     ? "bg-gray-300 cursor-not-allowed"
                     : "bg-gradient-to-r from-red-600 to-red-600 hover:from-black hover:to-black hover:shadow-xl"
                 }`}
                 onClick={applyEmployeeDiscount}
-                disabled={employeeDiscountApplied || !storeOpen}
+                disabled={!storeOpen}
                 title={
                   !storeOpen
                     ? "Store is closed"
                     : employeeDiscountApplied
-                    ? "Employee discount already applied"
+                    ? "Remove Employee discount"
                     : "Apply Employee discount (5%)"
                 }
               >
-                {employeeDiscountApplied ? "Employee 5%" : "Employee 5%"}
+                {employeeDiscountApplied ? "Employee 5% ✓" : "Employee 5%"}
               </button>
             </div>
 

@@ -13,9 +13,9 @@ const Sales = () => {
   });
 
   const [sales, setSales] = useState([]);
-  const [allSales, setAllSales] = useState([]); // For admin/owner view
+  const [allSales, setAllSales] = useState([]);
   const [storeHoursLogs, setStoreHoursLogs] = useState([]);
-  const [allStoreHoursLogs, setAllStoreHoursLogs] = useState([]); // For admin/owner view
+  const [allStoreHoursLogs, setAllStoreHoursLogs] = useState([]);
   const [showReceipt, setShowReceipt] = useState(null);
   const [showCashierDetails, setShowCashierDetails] = useState(null);
   const [exportRange, setExportRange] = useState("all");
@@ -26,10 +26,15 @@ const Sales = () => {
   const [activeReport, setActiveReport] = useState("sales");
   const [cashierCurrentPage, setCashierCurrentPage] = useState(1);
 
-  // New states for void functionality
+  // Updated states for void functionality with PIN verification
   const [showVoidModal, setShowVoidModal] = useState(false);
   const [orderToVoid, setOrderToVoid] = useState(null);
   const [voidReason, setVoidReason] = useState("");
+  const [voidPin, setVoidPin] = useState("");
+  const [isVerifyingPin, setIsVerifyingPin] = useState(false);
+  const [pinVerified, setPinVerified] = useState(false);
+  const [verifyingUser, setVerifyingUser] = useState(null);
+  const [pinError, setPinError] = useState("");
   const [isVoiding, setIsVoiding] = useState(false);
 
   // New states for success modal
@@ -125,8 +130,6 @@ const Sales = () => {
   };
 
   // Fetch store hours logs and compute cashier data
-
-  // Fetch store hours logs and compute cashier data
   useEffect(() => {
     const fetchStoreHoursLogs = async () => {
       try {
@@ -176,8 +179,6 @@ const Sales = () => {
   }, [selectedBranch, allSales, isAdminOrOwner]);
 
   // Compute cashier sales data based on store hours logs and orders
-  // I-FIX ANG computeCashierSalesData FUNCTION
-  // I-FIX ANG computeCashierSalesData FUNCTION
   const computeCashierSalesData = async (logs) => {
     const logsWithSales = await Promise.all(
       logs.map(async (log) => {
@@ -195,49 +196,21 @@ const Sales = () => {
           ? new Date(nextCloseLog.timestamp)
           : null;
 
-        // DEBUG: Print log info
-        console.log(`Processing log:`, {
-          logId: log.id,
-          userId: log.user_id,
-          userEmail: log.user_email,
-          branch: log.branch,
-          action: log.action,
-          loginTime: loginTime.toISOString(),
-        });
-
         // Calculate sales during this session
         const sessionSales = sales.filter((order) => {
           const orderTime = new Date(order.created_at);
           const orderUserId = order.userId || order.user_id;
 
-          // DEBUG per order
           const isMatch =
             orderTime >= loginTime &&
             (!logoutTime || orderTime <= logoutTime) &&
-            (orderUserId == log.user_id || order.cashier === log.user_email) && // FIX: Use == for loose comparison
-            (!log.branch || order.branch === log.branch) && // Handle null branches
+            (orderUserId == log.user_id || order.cashier === log.user_email) &&
+            (!log.branch || order.branch === log.branch) &&
             !order.is_void;
-
-          if (isMatch) {
-            console.log(`Matched order #${order.id} to log ${log.id}:`, {
-              orderUserId,
-              logUserId: log.user_id,
-              orderTime: orderTime.toISOString(),
-              loginTime: loginTime.toISOString(),
-              logoutTime: logoutTime ? logoutTime.toISOString() : "none",
-              orderBranch: order.branch,
-              logBranch: log.branch,
-            });
-          }
 
           return isMatch;
         });
 
-        console.log(
-          `Log ${log.id}: Found ${sessionSales.length} matching orders`
-        );
-
-        // ... rest of your calculations ...
         const totalSales = sessionSales.reduce(
           (sum, order) => sum + parseFloat(order.total || 0),
           0
@@ -249,7 +222,7 @@ const Sales = () => {
           return (
             orderTime < loginTime &&
             !order.is_void &&
-            (!log.branch || order.branch === log.branch) // Handle null branches
+            (!log.branch || order.branch === log.branch)
           );
         });
 
@@ -293,13 +266,6 @@ const Sales = () => {
 
     // Filter only "open" actions
     const openLogs = logsWithSales.filter((log) => log.action === "open");
-
-    console.log(`Total open logs: ${openLogs.length}`);
-    openLogs.forEach((log) => {
-      console.log(
-        `Open log ${log.id}: ${log.session_orders?.length || 0} orders`
-      );
-    });
 
     return openLogs;
   };
@@ -368,7 +334,7 @@ const Sales = () => {
     return "No product names available";
   };
 
-  // Get items for receipt display - IMPROVED VERSION
+  // Get items for receipt display
   const getReceiptItems = (sale) => {
     // Try to parse items JSON
     if (sale.items && sale.items !== "[]" && sale.items !== "{}") {
@@ -432,14 +398,105 @@ const Sales = () => {
     return `${hours}h ${minutes}m`;
   };
 
-  // VOID ORDER FUNCTIONALITY
+  // VOID ORDER FUNCTIONALITY WITH PIN VERIFICATION IN MODAL
   const handleVoidOrder = (order) => {
-    setOrderToVoid(order);
-    setShowVoidModal(true);
-    setVoidReason("");
+    // Check if current user is cashier
+    if (user?.role === "cashier") {
+      // For cashier, show modal with PIN verification
+      setOrderToVoid(order);
+      setShowVoidModal(true);
+      setVoidReason("");
+      setVoidPin("");
+      setPinVerified(false);
+      setVerifyingUser(null);
+      setPinError("");
+    } else if (user?.role === "manager" || user?.role === "admin") {
+      // For manager/admin, they can proceed directly
+      setOrderToVoid(order);
+      setShowVoidModal(true);
+      setVoidReason("");
+      setVoidPin("");
+      setPinVerified(true); // Auto-verified for manager/admin
+      setVerifyingUser(user);
+      setPinError("");
+    } else {
+      alert("You don't have permission to void orders.");
+    }
+  };
+
+  // Verify Void PIN
+  const verifyVoidPin = async () => {
+    if (!voidPin.trim()) {
+      setPinError("Please enter Manager/Owner Void PIN");
+      return;
+    }
+
+    setIsVerifyingPin(true);
+    setPinError("");
+
+    try {
+      // First, get all managers/admins with void PINs
+      const response = await api.get("/users");
+      const allUsers = response.data;
+
+      // Find a manager/admin with void PIN set
+      const managersWithPin = allUsers.filter(
+        (user) =>
+          (user.role === "manager" || user.role === "admin") && user.void_pin
+      );
+
+      if (managersWithPin.length === 0) {
+        setPinError("No Manager/Owner with Void PIN found in the system.");
+        setIsVerifyingPin(false);
+        return;
+      }
+
+      // Try to verify the PIN with any manager/admin account
+      let isValidPin = false;
+      let foundUser = null;
+
+      // Try each manager/admin account
+      for (const manager of managersWithPin) {
+        try {
+          const verifyResponse = await api.post(
+            `/users/${manager.id}/verify-void-pin`,
+            {
+              void_pin: voidPin,
+            }
+          );
+
+          if (verifyResponse.data.success) {
+            isValidPin = true;
+            foundUser = manager;
+            break;
+          }
+        } catch (error) {
+          console.log(`PIN verification failed for ${manager.email}`);
+          continue;
+        }
+      }
+
+      if (isValidPin) {
+        setPinVerified(true);
+        setVerifyingUser(foundUser);
+        setPinError("");
+      } else {
+        setPinError("Invalid Void PIN. Please try again.");
+      }
+    } catch (error) {
+      console.error("Error verifying Void PIN:", error);
+      setPinError("Error verifying Void PIN. Please try again.");
+    } finally {
+      setIsVerifyingPin(false);
+    }
   };
 
   const confirmVoidOrder = async () => {
+    if (!pinVerified) {
+      setPinError("Please verify PIN first");
+      return;
+    }
+
     if (!voidReason.trim()) {
       alert("Please enter a reason for voiding this order.");
       return;
@@ -447,16 +504,30 @@ const Sales = () => {
 
     setIsVoiding(true);
     try {
-      const response = await api.put(`/orders/${orderToVoid.id}/void`, {
+      // Prepare void data
+      const voidData = {
         is_void: true,
         void_reason: voidReason,
-        user: user,
         voided_at: new Date().toISOString(),
-      });
+        voided_by_user: verifyingUser || user,
+      };
+
+      // If cashier, include the authorized manager info
+      if (user?.role === "cashier" && verifyingUser) {
+        voidData.voided_by = verifyingUser.email;
+        voidData.void_authorized_by = verifyingUser;
+      } else {
+        voidData.voided_by = user?.name || user?.email || "Admin";
+      }
+
+      const response = await api.put(
+        `/orders/${orderToVoid.id}/void`,
+        voidData
+      );
 
       if (response.status === 200) {
         // Update local state
-        const voidedByName = user?.name || user?.email || "Admin";
+        const voidedByName = voidData.voided_by;
 
         // Update allSales if admin
         if (isAdminOrOwner) {
@@ -468,7 +539,7 @@ const Sales = () => {
                     is_void: true,
                     void_reason: voidReason,
                     voided_by: voidedByName,
-                    voided_by_user: user,
+                    voided_by_user: verifyingUser || user,
                     voided_at: new Date().toISOString(),
                     cashier: order.cashier,
                   }
@@ -486,7 +557,7 @@ const Sales = () => {
                   is_void: true,
                   void_reason: voidReason,
                   voided_by: voidedByName,
-                  voided_by_user: user,
+                  voided_by_user: verifyingUser || user,
                   voided_at: new Date().toISOString(),
                   cashier: order.cashier,
                 }
@@ -495,15 +566,23 @@ const Sales = () => {
         );
 
         // Show success message
-        setSuccessMessage(
-          `Order #${orderToVoid.id} has been successfully voided by ${voidedByName}.`
-        );
+        let successMsg = `Order #${orderToVoid.id} has been successfully voided by ${voidedByName}.`;
+
+        if (user?.role === "cashier" && verifyingUser) {
+          successMsg += ` (Authorized by ${verifyingUser.email})`;
+        }
+
+        setSuccessMessage(successMsg);
         setShowSuccessModal(true);
 
         // Close modal and reset
         setShowVoidModal(false);
         setOrderToVoid(null);
         setVoidReason("");
+        setVoidPin("");
+        setPinVerified(false);
+        setVerifyingUser(null);
+        setPinError("");
       }
     } catch (error) {
       console.error("Error voiding order:", error);
@@ -533,7 +612,7 @@ const Sales = () => {
     );
   };
 
-  // Print functions
+  // Print functions (same as before)
   const printReceipt = () => {
     const printWindow = window.open("", "_blank");
     const receipt = showReceipt;
@@ -2477,11 +2556,7 @@ Items:
         {/* HEADER WITH BRANCH INFO */}
         <div className="flex justify-between items-center mb-4">
           <h1 className="text-2xl font-bold">SALES REPORTS</h1>
-          <div className="flex items-center gap-4">
-           
-
-           
-          </div>
+          <div className="flex items-center gap-4"></div>
         </div>
 
         {/* Report Navigation Headers */}
@@ -2565,23 +2640,20 @@ Items:
               </>
             )}
             {isAdminOrOwner && (
-              
-                 
-                  <select
-                    value={selectedBranch}
-                    onChange={(e) => setSelectedBranch(e.target.value)}
-                    className="border border-gray-300 rounded px-3 py-2"
-                  >
-                    <option value="all">All Branches</option>
-                    {allBranches
-                      .filter((branch) => branch !== "all")
-                      .map((branch) => (
-                        <option key={branch} value={branch}>
-                          {branch}
-                        </option>
-                      ))}
-                  </select>
-               
+              <select
+                value={selectedBranch}
+                onChange={(e) => setSelectedBranch(e.target.value)}
+                className="border border-gray-300 rounded px-3 py-2"
+              >
+                <option value="all">All Branches</option>
+                {allBranches
+                  .filter((branch) => branch !== "all")
+                  .map((branch) => (
+                    <option key={branch} value={branch}>
+                      {branch}
+                    </option>
+                  ))}
+              </select>
             )}
 
             <button
@@ -3847,7 +3919,7 @@ Items:
         </div>
       )}
 
-      {/* Void Confirmation Modal */}
+      {/* Void Confirmation Modal WITH PIN VERIFICATION */}
       {showVoidModal && orderToVoid && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full">
@@ -3859,9 +3931,13 @@ Items:
                   setShowVoidModal(false);
                   setOrderToVoid(null);
                   setVoidReason("");
+                  setVoidPin("");
+                  setPinVerified(false);
+                  setVerifyingUser(null);
+                  setPinError("");
                 }}
                 className="text-2xl hover:bg-white hover:bg-opacity-20 rounded-lg w-8 h-8 flex items-center justify-center transition-all"
-                disabled={isVoiding}
+                disabled={isVoiding || isVerifyingPin}
               >
                 ×
               </button>
@@ -3869,6 +3945,141 @@ Items:
 
             {/* Modal Content */}
             <div className="p-6">
+              {/* PIN Verification Section - Only show if not verified */}
+              {!pinVerified && user?.role === "cashier" && (
+                <div className="mb-6">
+                  <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4">
+                    <div className="flex items-center mb-2">
+                      <svg
+                        className="w-6 h-6 text-yellow-600 mr-2"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth="2"
+                          d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
+                        />
+                      </svg>
+                      <span className="font-bold text-yellow-800">
+                        Manager/Owner Authorization Required
+                      </span>
+                    </div>
+                    <p className="text-yellow-700 text-sm">
+                      You need Manager/Owner authorization to void this order.
+                      Please enter the Void PIN.
+                    </p>
+                  </div>
+
+                  <div className="mb-4">
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Manager/Owner Void PIN *
+                    </label>
+                    <div className="flex gap-2">
+                      <input
+                        type="password"
+                        value={voidPin}
+                        onChange={(e) => setVoidPin(e.target.value)}
+                        placeholder="Enter 4-6 digit PIN"
+                        className="w-full border border-gray-300 rounded-lg px-4 py-3 focus:ring-2 focus:ring-red-500 focus:border-red-500"
+                        disabled={isVerifyingPin}
+                      />
+                      <button
+                        onClick={verifyVoidPin}
+                        disabled={isVerifyingPin || !voidPin.trim()}
+                        className={`px-4 py-3 rounded-lg font-medium transition-all duration-200 flex items-center gap-2 ${
+                          isVerifyingPin || !voidPin.trim()
+                            ? "bg-gray-300 cursor-not-allowed text-gray-500"
+                            : "bg-gradient-to-r from-yellow-600 to-yellow-700 text-white hover:from-yellow-700 hover:to-yellow-800"
+                        }`}
+                      >
+                        {isVerifyingPin ? (
+                          <>
+                            <svg
+                              className="animate-spin h-5 w-5 text-white"
+                              xmlns="http://www.w3.org/2000/svg"
+                              fill="none"
+                              viewBox="0 0 24 24"
+                            >
+                              <circle
+                                className="opacity-25"
+                                cx="12"
+                                cy="12"
+                                r="10"
+                                stroke="currentColor"
+                                strokeWidth="4"
+                              ></circle>
+                              <path
+                                className="opacity-75"
+                                fill="currentColor"
+                                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                              ></path>
+                            </svg>
+                            Verifying...
+                          </>
+                        ) : (
+                          <>
+                            <svg
+                              className="w-5 h-5"
+                              fill="none"
+                              stroke="currentColor"
+                              viewBox="0 0 24 24"
+                            >
+                              <path
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                strokeWidth="2"
+                                d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"
+                              />
+                            </svg>
+                            Verify
+                          </>
+                        )}
+                      </button>
+                    </div>
+                    {pinError && (
+                      <p className="text-red-600 text-sm mt-2">{pinError}</p>
+                    )}
+                  </div>
+                  <div className="border-t border-gray-200 my-4 pt-4"></div>
+                </div>
+              )}
+
+              {/* Show authorization info if PIN verified */}
+              {pinVerified && verifyingUser && (
+                <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-4">
+                  <div className="flex items-center mb-2">
+                    <svg
+                      className="w-6 h-6 text-green-600 mr-2"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth="2"
+                        d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"
+                      />
+                    </svg>
+                    <span className="font-bold text-green-800">
+                      PIN Verified ✓
+                    </span>
+                  </div>
+                  <p className="text-green-700 text-sm">
+                    Authorized by: <strong>{verifyingUser.email}</strong>
+                    <br />
+                    Role:{" "}
+                    <strong>
+                      {verifyingUser.role === "admin" ? "Owner" : "Manager"}
+                    </strong>
+                  </p>
+                </div>
+              )}
+
+              {/* Warning Message */}
               <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
                 <div className="flex items-center mb-2">
                   <svg
@@ -3898,6 +4109,7 @@ Items:
                 </p>
               </div>
 
+              {/* Reason Input (only enabled if PIN verified or user is manager/admin) */}
               <div className="mb-6">
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Reason for voiding this order: *
@@ -3908,7 +4120,9 @@ Items:
                   placeholder="Enter reason (e.g., customer cancellation, incorrect order, payment issue...)"
                   className="w-full border border-gray-300 rounded-lg px-4 py-3 focus:ring-2 focus:ring-red-500 focus:border-red-500"
                   rows="3"
-                  disabled={isVoiding}
+                  disabled={
+                    isVoiding || (user?.role === "cashier" && !pinVerified)
+                  }
                 />
                 <p className="text-xs text-gray-500 mt-1">
                   Required. Please provide a clear reason for voiding this
@@ -3972,6 +4186,10 @@ Items:
                   setShowVoidModal(false);
                   setOrderToVoid(null);
                   setVoidReason("");
+                  setVoidPin("");
+                  setPinVerified(false);
+                  setVerifyingUser(null);
+                  setPinError("");
                 }}
                 className="bg-gray-100 text-gray-700 px-6 py-2.5 rounded-lg hover:bg-gray-200 font-medium transition-all duration-200"
                 disabled={isVoiding}
@@ -3980,9 +4198,15 @@ Items:
               </button>
               <button
                 onClick={confirmVoidOrder}
-                disabled={isVoiding || !voidReason.trim()}
+                disabled={
+                  isVoiding ||
+                  !voidReason.trim() ||
+                  (user?.role === "cashier" && !pinVerified)
+                }
                 className={`px-6 py-2.5 rounded-lg font-medium transition-all duration-200 flex items-center gap-2 ${
-                  isVoiding || !voidReason.trim()
+                  isVoiding ||
+                  !voidReason.trim() ||
+                  (user?.role === "cashier" && !pinVerified)
                     ? "bg-red-400 cursor-not-allowed text-white"
                     : "bg-gradient-to-r from-red-600 to-red-700 text-white hover:from-red-700 hover:to-red-800"
                 }`}
