@@ -134,14 +134,7 @@ const handleSubmit = async (e) => {
               >
                 Password
               </label>
-              <div className="text-sm">
-                <a
-                  href="#"
-                  className="font-semibold text-red-500 hover:text-red-400"
-                >
-                  Forgot password?
-                </a>
-              </div>
+             
             </div>
             <input
               id="password"
@@ -184,16 +177,8 @@ const handleSubmit = async (e) => {
             {loading ? "Signing in..." : "Sign In"}
           </button>
 
-          {/* Redirect to Register */}
-          <div className="mt-4 text-center text-sm text-gray-600">
-            Not a member?{" "}
-            <Link
-              to="/register"
-              className="font-semibold text-red-600 hover:text-red-400"
-            >
-              Click to Register
-            </Link>
-          </div>
+      
+         
         </form>
       </div>
     </div>

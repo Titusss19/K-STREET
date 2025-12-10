@@ -25,7 +25,12 @@ import {
   Building,
   Filter,
   ChevronDown,
-  
+  CheckCircle,
+  AlertCircle,
+  XCircle,
+  MessageCircle,
+  MoreVertical,
+  Clock,
 } from "lucide-react";
 
 export default function Dashboard() {
@@ -40,6 +45,14 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(false);
   const [announcementsLoading, setAnnouncementsLoading] = useState(false);
   const [ordersLoading, setOrdersLoading] = useState(false);
+
+  // NEW: Feedback Modals State
+  const [showFeedbackModal, setShowFeedbackModal] = useState(false);
+  const [feedbackData, setFeedbackData] = useState({
+    title: "",
+    message: "",
+    type: "success", // success, error, warning
+  });
 
   const [announcements, setAnnouncements] = useState([]);
   const [orders, setOrders] = useState([]);
@@ -63,10 +76,104 @@ export default function Dashboard() {
     role: "cashier",
     status: "Active",
     branch: "main",
-    void_pin: "", // ADD THIS
+    void_pin: "",
+  });
+
+  // VOIDED ORDERS STATE
+  const [voidedOrders, setVoidedOrders] = useState([]);
+  const [voidedSummary, setVoidedSummary] = useState({
+    voided_count: 0,
+    total_voided_amount: 0,
   });
 
   const navigate = useNavigate();
+
+  // Helper function to show feedback modal
+  const showFeedback = (title, message, type = "success") => {
+    setFeedbackData({ title, message, type });
+    setShowFeedbackModal(true);
+  };
+
+  // Helper function to close feedback modal
+  const closeFeedback = () => {
+    setShowFeedbackModal(false);
+    setFeedbackData({ title: "", message: "", type: "success" });
+  };
+
+  // Feedback Modal Component
+  const FeedbackModal = () => {
+    if (!showFeedbackModal) return null;
+
+    const config = {
+      success: {
+        icon: CheckCircle,
+        iconColor: "text-green-500",
+        bgColor: "bg-green-100",
+        textColor: "text-green-800",
+        buttonColor: "bg-green-500 hover:bg-green-600",
+        borderColor: "border-green-200",
+      },
+      error: {
+        icon: XCircle,
+        iconColor: "text-red-500",
+        bgColor: "bg-red-100",
+        textColor: "text-red-800",
+        buttonColor: "bg-red-500 hover:bg-red-600",
+        borderColor: "border-red-200",
+      },
+      warning: {
+        icon: AlertCircle,
+        iconColor: "text-yellow-500",
+        bgColor: "bg-yellow-100",
+        textColor: "text-yellow-800",
+        buttonColor: "bg-yellow-500 hover:bg-yellow-600",
+        borderColor: "border-yellow-200",
+      },
+    };
+
+    const { icon, iconColor, bgColor, textColor, buttonColor, borderColor } =
+      config[feedbackData.type] || config.success;
+
+    return (
+      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[60] p-4">
+        <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 transform transition-all">
+          <div
+            className={`${bgColor} ${borderColor} border-2 rounded-xl p-4 mb-6`}
+          >
+            <div className="flex items-center justify-center mb-4">
+              <div
+                className={`w-16 h-16 ${bgColor} rounded-full flex items-center justify-center`}
+              >
+                {React.createElement(icon, { size: 40, className: iconColor })}
+              </div>
+            </div>
+            <h3 className={`text-xl font-bold text-center mb-2 ${textColor}`}>
+              {feedbackData.title}
+            </h3>
+            <p className="text-center text-gray-700">{feedbackData.message}</p>
+          </div>
+          <div className="flex justify-center">
+            <button
+              onClick={closeFeedback}
+              className={`px-6 py-3 ${buttonColor} text-white font-medium rounded-lg shadow-md hover:shadow-lg transition-all transform hover:scale-105`}
+            >
+              Okay
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // Helper function to check if void_pin is valid
+  const hasValidVoidPin = (employee) => {
+    if (!employee || !employee.void_pin) return false;
+    if (typeof employee.void_pin !== "string") return false;
+    if (employee.void_pin.trim() === "") return false;
+    if (employee.void_pin === "null") return false;
+    if (employee.void_pin === "undefined") return false;
+    return true;
+  };
 
   const getAuthHeaders = () => {
     const userData = localStorage.getItem("user");
@@ -85,20 +192,6 @@ export default function Dashboard() {
     }
   };
 
-  // Helper function to validate Void PIN
-  const validateVoidPin = (pin) => {
-    if (!pin || pin.trim() === "") {
-      return { valid: false, message: "Void PIN is required" };
-    }
-    if (pin.length < 4) {
-      return { valid: false, message: "Void PIN must be at least 4 digits" };
-    }
-    if (!/^\d+$/.test(pin)) {
-      return { valid: false, message: "Void PIN must contain only numbers" };
-    }
-    return { valid: true, message: "Void PIN is valid" };
-  };
-
   const fetchUsers = async () => {
     setLoading(true);
     try {
@@ -112,7 +205,6 @@ export default function Dashboard() {
       }
 
       const data = await response.json();
-      console.log("Users API Response:", data);
 
       if (Array.isArray(data)) {
         const transformedUsers = data.map((user) => ({
@@ -123,7 +215,7 @@ export default function Dashboard() {
           created_at: user.created_at,
           status: user.status || "Active",
           branch: user.branch || "main",
-          void_pin: user.void_pin || null, // ADD THIS LINE
+          void_pin: user.void_pin || null,
         }));
         setEmployees(transformedUsers);
 
@@ -140,7 +232,7 @@ export default function Dashboard() {
           created_at: user.created_at,
           status: user.status || "Active",
           branch: user.branch || "main",
-          void_pin: user.void_pin || null, // ADD THIS LINE
+          void_pin: user.void_pin || null,
         }));
         setEmployees(transformedUsers);
 
@@ -149,7 +241,6 @@ export default function Dashboard() {
         ];
         setBranches(uniqueBranches);
       } else {
-        console.error("Unexpected users response format:", data);
         setEmployees([]);
         setBranches([]);
       }
@@ -168,12 +259,6 @@ export default function Dashboard() {
       const userBranch = user?.branch;
       const userRole = user?.role;
 
-      console.log("Fetching announcements for:", {
-        branch: userBranch,
-        role: userRole,
-        selectedBranchFilter: selectedBranchFilter,
-      });
-
       let url = "http://localhost:3002/announcements";
 
       if (
@@ -187,8 +272,6 @@ export default function Dashboard() {
         url = `http://localhost:3002/announcements?branch=${userBranch}`;
       }
 
-      console.log("Fetching from URL:", url);
-
       const headers = getAuthHeaders();
       const response = await fetch(url, {
         headers: headers,
@@ -199,7 +282,6 @@ export default function Dashboard() {
       }
 
       const data = await response.json();
-      console.log("Announcements API Response:", data);
 
       let announcementsData = [];
 
@@ -208,7 +290,6 @@ export default function Dashboard() {
       } else if (data.success && Array.isArray(data.announcements)) {
         announcementsData = data.announcements;
       } else {
-        console.error("Unexpected announcements response format:", data);
         announcementsData = [];
       }
 
@@ -238,27 +319,23 @@ export default function Dashboard() {
       setAnnouncementsLoading(false);
     }
   };
-  // Add this to your useState declarations
+
   const [inventoryTotal, setInventoryTotal] = useState({
     totalValue: 0,
     itemCount: 0,
   });
 
-  // Add this function to fetch inventory total
   const fetchInventoryTotal = async () => {
     try {
       const headers = getAuthHeaders();
       let url = "http://localhost:3002/inventory/total-value";
 
-      // If admin and branch filter is selected, add branch parameter
       if (
         selectedBranchFilter !== "all" &&
         (user?.role === "admin" || user?.role === "owner")
       ) {
         url = `http://localhost:3002/inventory/total-value?branch=${selectedBranchFilter}`;
       }
-
-      console.log("Fetching inventory total from:", url);
 
       const response = await fetch(url, {
         headers: headers,
@@ -269,7 +346,6 @@ export default function Dashboard() {
       }
 
       const data = await response.json();
-      console.log("Inventory total API Response:", data);
 
       if (data.success) {
         setInventoryTotal({
@@ -293,21 +369,14 @@ export default function Dashboard() {
 
       let url = "http://localhost:3002/orders";
 
-      console.log("Fetching orders for branch filter:", selectedBranchFilter);
-      console.log("User role:", user?.role);
-
       if (
         selectedBranchFilter !== "all" &&
         (user?.role === "admin" || user?.role === "owner")
       ) {
         url = `http://localhost:3002/orders?branch=${selectedBranchFilter}`;
-        console.log("Using filtered URL:", url);
       } else if (user?.role !== "admin" && user?.role !== "owner") {
         url = `http://localhost:3002/orders?branch=${user?.branch || "main"}`;
-        console.log("Non-admin user, using branch:", user?.branch);
       }
-
-      console.log("Final URL:", url);
 
       const response = await fetch(url, {
         headers: headers,
@@ -318,7 +387,6 @@ export default function Dashboard() {
       }
 
       const ordersData = await response.json();
-      console.log("Orders API Response data count:", ordersData.length || 0);
 
       let ordersArray = [];
 
@@ -327,47 +395,43 @@ export default function Dashboard() {
       } else if (ordersData.success && Array.isArray(ordersData.orders)) {
         ordersArray = ordersData.orders;
       } else {
-        console.error("Unexpected orders response format:", ordersData);
         ordersArray = [];
       }
 
-      console.log(`Found ${ordersArray.length} orders for current filter`);
-
-      if (ordersArray.length > 0) {
-        ordersArray.slice(0, 3).forEach((order, index) => {
-          console.log(`Sample Order ${index + 1}:`, {
-            id: order.id,
-            total: order.total,
-            paidAmount: order.paidAmount,
-            branch: order.branch,
-            created_at: order.created_at,
-          });
-        });
-      }
-
+      // Set orders including voided
       setOrders(ordersArray);
 
-      const uniqueBranches = [
-        ...new Set(ordersArray.map((order) => order.branch || "main")),
-      ];
-      console.log("Unique branches from orders:", uniqueBranches);
+      // Extract voided orders
+      const voidedOrdersArray = ordersArray.filter(
+        (order) => order.is_void === 1 || order.is_void === true
+      );
+      setVoidedOrders(voidedOrdersArray);
 
-      setBranches((prev) => {
-        const combined = [...new Set([...prev, ...uniqueBranches])];
-        console.log("All unique branches combined:", combined);
-        return combined;
-      });
+      // Calculate voided summary
+      const voidedSummary = {
+        voided_count: voidedOrdersArray.length,
+        total_voided_amount: voidedOrdersArray.reduce((sum, order) => {
+          const orderTotal =
+            parseFloat(order.total) || parseFloat(order.paidAmount) || 0;
+          return sum + orderTotal;
+        }, 0),
+      };
+      setVoidedSummary(voidedSummary);
 
-      const processedData = processOrdersData(ordersArray);
+      // Process sales data (exclude voided orders)
+      const nonVoidedOrders = ordersArray.filter(
+        (order) => !(order.is_void === 1 || order.is_void === true)
+      );
+      const processedData = processOrdersData(nonVoidedOrders);
       setSalesData(processedData);
-
-      setTimeout(() => {
-        const stats = calculateStats();
-        console.log("Stats after fetch:", stats);
-      }, 100);
     } catch (error) {
       console.error("Error fetching orders:", error);
       setOrders([]);
+      setVoidedOrders([]);
+      setVoidedSummary({
+        voided_count: 0,
+        total_voided_amount: 0,
+      });
       setSalesData([]);
     } finally {
       setOrdersLoading(false);
@@ -400,9 +464,6 @@ export default function Dashboard() {
       if (dayIndex !== -1) {
         const orderTotal =
           parseFloat(order.total) || parseFloat(order.paidAmount) || 0;
-        console.log(
-          `Adding order ${order.id} total: ${orderTotal} for date: ${orderDate}`
-        );
         salesData[dayIndex].today += orderTotal;
       }
     });
@@ -411,108 +472,183 @@ export default function Dashboard() {
       salesData[i].yesterday = salesData[i - 1].today;
     }
 
-    console.log("Processed sales data:", salesData);
     return salesData;
   };
 
   const calculateStats = () => {
     const today = new Date().toISOString().split("T")[0];
-    console.log("\n=== CALCULATING STATS ===");
-    console.log("Today's date:", today);
-    console.log("Selected branch filter:", selectedBranchFilter);
-    console.log("Total orders in state:", orders.length);
-    console.log("Inventory total value:", inventoryTotal.totalValue);
 
     let filteredOrders = [...orders];
+    let filteredVoidedOrders = [...voidedOrders];
 
     if (selectedBranchFilter !== "all") {
       filteredOrders = orders.filter(
         (order) => (order.branch || "main") === selectedBranchFilter
       );
+      filteredVoidedOrders = voidedOrders.filter(
+        (order) => (order.branch || "main") === selectedBranchFilter
+      );
     }
 
-    console.log(
-      `Filtered orders count: ${filteredOrders.length} for branch: ${selectedBranchFilter}`
-    );
+    // CALCULATE GROSS SALES (Lahat ng orders, kasama voided)
+    const grossSales = filteredOrders.reduce((sum, order) => {
+      const total =
+        parseFloat(order.total) || parseFloat(order.paidAmount) || 0;
+      return sum + total;
+    }, 0);
 
-    const todayOrders = filteredOrders.filter((order) => {
-      if (!order.created_at) {
-        return false;
+    // CALCULATE VOIDED AMOUNT
+    const voidedAmount = filteredVoidedOrders.reduce((sum, order) => {
+      if (order.is_void === 1 || order.is_void === true) {
+        const orderTotal =
+          parseFloat(order.total) || parseFloat(order.paidAmount) || 0;
+        return sum + orderTotal;
       }
+      return sum;
+    }, 0);
+
+    // NET SALES = GROSS SALES - VOIDED AMOUNT
+    const netSales = grossSales - voidedAmount;
+
+    // Today's calculations
+    const todayOrders = filteredOrders.filter((order) => {
+      if (!order.created_at) return false;
 
       try {
         const orderDate = new Date(order.created_at)
           .toISOString()
           .split("T")[0];
         const isToday = orderDate === today;
+
+        if (order.is_void === 1 || order.is_void === true) {
+          return false;
+        }
+
         return isToday;
       } catch (error) {
-        console.error("Error parsing date for order:", order.id, error);
         return false;
       }
     });
 
-    const todaySales = todayOrders.reduce((sum, order) => {
-      const total =
-        parseFloat(order.total) ||
-        parseFloat(order.paidAmount) ||
-        parseFloat(order.amount) ||
-        0;
-      return sum + total;
+    // Today's voided orders
+    const todayVoidedOrders = filteredVoidedOrders.filter((order) => {
+      if (!order.created_at && !order.voided_at) return false;
+
+      try {
+        const orderDate = new Date(order.created_at || order.voided_at)
+          .toISOString()
+          .split("T")[0];
+        const isToday = orderDate === today;
+        const isVoided = order.is_void === 1 || order.is_void === true;
+
+        return isToday && isVoided;
+      } catch (error) {
+        return false;
+      }
+    });
+
+    // Today's gross sales (kasama voided for today)
+    const todayGrossSales = filteredOrders
+      .filter((order) => {
+        if (!order.created_at) return false;
+
+        try {
+          const orderDate = new Date(order.created_at)
+            .toISOString()
+            .split("T")[0];
+          return orderDate === today;
+        } catch (error) {
+          return false;
+        }
+      })
+      .reduce((sum, order) => {
+        const total =
+          parseFloat(order.total) || parseFloat(order.paidAmount) || 0;
+        return sum + total;
+      }, 0);
+
+    // Today's voided amount
+    const todayVoidedAmount = todayVoidedOrders.reduce((sum, order) => {
+      const orderTotal =
+        parseFloat(order.total) || parseFloat(order.paidAmount) || 0;
+      return sum + orderTotal;
     }, 0);
 
+    // Today's net sales
+    const todayNetSales = todayGrossSales - todayVoidedAmount;
+
+    // Transactions count (exclude voided)
     const todayTransactions = todayOrders.length;
 
-    const totalSales = filteredOrders.reduce((sum, order) => {
-      const total =
-        parseFloat(order.total) ||
-        parseFloat(order.paidAmount) ||
-        parseFloat(order.amount) ||
-        0;
-      return sum + total;
-    }, 0);
-
-    console.log("Final calculated stats:", {
-      todaySales: `₱${todaySales.toFixed(2)}`,
-      todayTransactions,
-      totalSales: `₱${totalSales.toFixed(2)}`,
-      inventoryValue: `₱${inventoryTotal.totalValue.toFixed(2)}`,
-      inventoryItemCount: inventoryTotal.itemCount,
-    });
-    console.log("=== END STATS CALCULATION ===\n");
+    // Total transactions count (exclude voided)
+    const totalTransactions = filteredOrders.filter(
+      (order) => !(order.is_void === 1 || order.is_void === true)
+    ).length;
 
     return {
-      todaySales,
-      todayTransactions,
-      totalSales,
-      inventoryValue: inventoryTotal.totalValue, // ADD THIS
-      inventoryItemCount: inventoryTotal.itemCount, // ADD THIS
+      // BAGO: Gross Sales (lahat ng orders)
+      grossSales: grossSales,
+
+      // BAGO: Net Sales (gross minus voided)
+      netSales: netSales,
+
+      // BAGO: Voided Amount
+      voidedAmount: voidedAmount,
+
+      todaySales: todayNetSales, // net sales for today
+      todayGrossSales: todayGrossSales, // gross sales for today
+      todayVoidedAmount: todayVoidedAmount, // voided amount for today
+      todayTransactions: todayTransactions,
+      totalSales: netSales, // use net sales as total sales
+
+      inventoryValue: inventoryTotal.totalValue,
+      inventoryItemCount: inventoryTotal.itemCount,
+      totalTransactions: totalTransactions,
+
+      // Stats for display
+      voidedOrdersCount: filteredVoidedOrders.filter(
+        (order) => order.is_void === 1 || order.is_void === true
+      ).length,
+      todayVoidedOrdersCount: todayVoidedOrders.length,
     };
   };
 
   const getAnnouncementIcon = (type) => {
     switch (type) {
       case "info":
-        return Activity;
+        return MessageCircle;
       case "success":
-        return TrendingUp;
+        return CheckCircle;
       case "warning":
-        return Bell;
+        return AlertCircle;
       default:
-        return Activity;
+        return MessageCircle;
     }
   };
 
   const getAnnouncementColor = (type) => {
     switch (type) {
       case "info":
-        return "blue";
+        return "text-blue-500";
       case "success":
-        return "green";
+        return "text-green-500";
       case "warning":
-        return "purple";
+        return "text-yellow-500";
       default:
-        return "blue";
+        return "text-blue-500";
+    }
+  };
+
+  const getAnnouncementBgColor = (type) => {
+    switch (type) {
+      case "info":
+        return "bg-blue-50";
+      case "success":
+        return "bg-green-50";
+      case "warning":
+        return "bg-yellow-50";
+      default:
+        return "bg-blue-50";
     }
   };
 
@@ -540,7 +676,7 @@ export default function Dashboard() {
     fetchUsers();
     fetchAnnouncements();
     fetchOrders();
-    fetchInventoryTotal(); // ADD THIS
+    fetchInventoryTotal();
   }, [navigate]);
 
   useEffect(() => {
@@ -548,26 +684,19 @@ export default function Dashboard() {
       fetchAnnouncements();
       fetchOrders();
       fetchUsers();
-      fetchInventoryTotal(); // ADD THIS
+      fetchInventoryTotal();
     }
   }, [user]);
 
-  // Add this useEffect for branch filter changes
   useEffect(() => {
     if (user) {
-      console.log("Branch filter changed to:", selectedBranchFilter);
       fetchOrders();
-      fetchInventoryTotal(); // ADD THIS
+      fetchInventoryTotal();
     }
   }, [selectedBranchFilter]);
 
   useEffect(() => {
     if (user && selectedBranchFilter !== "all") {
-      console.log(
-        "Branch filter changed to:",
-        selectedBranchFilter,
-        "fetching orders..."
-      );
       const timer = setTimeout(() => {
         fetchOrders();
       }, 300);
@@ -578,20 +707,9 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (user) {
-      console.log("Branch filter changed, fetching announcements...");
       fetchAnnouncements();
     }
   }, [selectedBranchFilter, user]);
-
-  useEffect(() => {
-    if (orders.length > 0) {
-      console.log("Orders updated, recalculating stats...");
-      console.log("Current branch filter:", selectedBranchFilter);
-
-      const stats = calculateStats();
-      console.log("Recalculated stats:", stats);
-    }
-  }, [selectedBranchFilter, orders]);
 
   const handleLogout = () => {
     localStorage.removeItem("user");
@@ -602,6 +720,11 @@ export default function Dashboard() {
 
   const handleViewChange = (view) => {
     setActiveView(view);
+  };
+
+  // Function to navigate to Attendance page
+  const handleGoToAttendance = () => {
+    navigate("/attendance");
   };
 
   const handleAddAnnouncement = async () => {
@@ -631,19 +754,39 @@ export default function Dashboard() {
           setShowAnnouncementModal(false);
 
           if (user?.role === "admin" || user?.role === "owner") {
-            alert(
-              "Global announcement posted successfully! Visible to ALL branches."
+            showFeedback(
+              "Success!",
+              "Global announcement posted successfully! Visible to ALL branches.",
+              "success"
             );
           } else {
-            alert("Announcement posted successfully to your branch!");
+            showFeedback(
+              "Success!",
+              "Announcement posted successfully to your branch!",
+              "success"
+            );
           }
         } else {
-          alert(data.message || "Failed to post announcement");
+          showFeedback(
+            "Error",
+            data.message || "Failed to post announcement",
+            "error"
+          );
         }
       } catch (error) {
         console.error("Error posting announcement:", error);
-        alert("Error posting announcement. Please try again.");
+        showFeedback(
+          "Error",
+          "Error posting announcement. Please try again.",
+          "error"
+        );
       }
+    } else {
+      showFeedback(
+        "Warning",
+        "Please fill in both title and message fields.",
+        "warning"
+      );
     }
   };
 
@@ -656,29 +799,37 @@ export default function Dashboard() {
       newUser.branch
     ) {
       if (newUser.password !== newUser.confirmPassword) {
-        alert("Passwords do not match!");
+        showFeedback("Error", "Passwords do not match!", "error");
         return;
       }
 
       if (newUser.password.length < 6) {
-        alert("Password must be at least 6 characters!");
+        showFeedback(
+          "Error",
+          "Password must be at least 6 characters!",
+          "error"
+        );
         return;
       }
 
       // Validate Void PIN for Manager/Admin
       if (newUser.role === "manager" || newUser.role === "admin") {
         if (!newUser.void_pin || newUser.void_pin.trim() === "") {
-          alert("Manager/Owner accounts must have a Void PIN.");
+          showFeedback(
+            "Warning",
+            "Manager/Owner accounts must have a Void PIN.",
+            "warning"
+          );
           return;
         }
 
         if (newUser.void_pin.length < 4) {
-          alert("Void PIN must be at least 4 digits.");
+          showFeedback("Error", "Void PIN must be at least 4 digits.", "error");
           return;
         }
 
         if (!/^\d+$/.test(newUser.void_pin)) {
-          alert("Void PIN must contain only numbers.");
+          showFeedback("Error", "Void PIN must contain only numbers.", "error");
           return;
         }
       }
@@ -718,34 +869,41 @@ export default function Dashboard() {
             void_pin: "",
           });
           setShowAddUserModal(false);
-          alert("User added successfully!");
+          showFeedback("Success!", "User added successfully!", "success");
         } else {
-          alert(data.message || "Failed to add user");
+          showFeedback("Error", data.message || "Failed to add user", "error");
         }
       } catch (error) {
         console.error("Error adding user:", error);
-        alert("Error adding user. Please try again.");
+        showFeedback("Error", "Error adding user. Please try again.", "error");
       }
     } else {
-      alert("Please fill all fields including branch!");
+      showFeedback(
+        "Warning",
+        "Please fill all fields including branch!",
+        "warning"
+      );
     }
   };
 
   const handleEditEmployee = (employee) => {
-    // Allow admin, owner, and manager
     if (
       user?.role !== "admin" &&
       user?.role !== "owner" &&
       user?.role !== "manager"
     ) {
-      alert("You don't have permission to edit users.");
+      showFeedback(
+        "Access Denied",
+        "You don't have permission to edit users.",
+        "error"
+      );
       return;
     }
 
     setSelectedEmployee({
       ...employee,
       username: employee.username || "",
-      void_pin: "", // Always empty for security
+      void_pin: "",
     });
     setShowEditModal(true);
   };
@@ -753,21 +911,31 @@ export default function Dashboard() {
   const handleUpdateEmployee = async () => {
     if (selectedEmployee) {
       try {
-        // Validate: Only manager/admin can set Void PIN
         if (selectedEmployee.void_pin && selectedEmployee.void_pin.length > 0) {
           if (selectedEmployee.role === "cashier") {
-            alert("Cashier accounts cannot have a Void PIN.");
+            showFeedback(
+              "Error",
+              "Cashier accounts cannot have a Void PIN.",
+              "error"
+            );
             return;
           }
 
           if (selectedEmployee.void_pin.length < 4) {
-            alert("Void PIN must be at least 4 digits.");
+            showFeedback(
+              "Error",
+              "Void PIN must be at least 4 digits.",
+              "error"
+            );
             return;
           }
 
-          // Check if PIN contains only numbers
           if (!/^\d+$/.test(selectedEmployee.void_pin)) {
-            alert("Void PIN must contain only numbers.");
+            showFeedback(
+              "Error",
+              "Void PIN must contain only numbers.",
+              "error"
+            );
             return;
           }
         }
@@ -784,7 +952,7 @@ export default function Dashboard() {
               role: selectedEmployee.role,
               status: selectedEmployee.status,
               branch: selectedEmployee.branch,
-              void_pin: selectedEmployee.void_pin || null, // Send void_pin
+              void_pin: selectedEmployee.void_pin || null,
             }),
           }
         );
@@ -792,28 +960,40 @@ export default function Dashboard() {
         const data = await response.json();
 
         if (data.success) {
-          fetchUsers();
+          // Wait for fetchUsers to complete before closing modal
+          await fetchUsers();
           setShowEditModal(false);
           setSelectedEmployee(null);
-          alert("User updated successfully!");
+          showFeedback("Success!", "User updated successfully!", "success");
         } else {
-          alert(data.message || "Failed to update user");
+          showFeedback(
+            "Error",
+            data.message || "Failed to update user",
+            "error"
+          );
         }
       } catch (error) {
         console.error("Error updating user:", error);
-        alert("Error updating user. Please try again.");
+        showFeedback(
+          "Error",
+          "Error updating user. Please try again.",
+          "error"
+        );
       }
     }
   };
 
   const handleDeleteEmployee = (employee) => {
-    // Allow admin, owner, and manager
     if (
       user?.role !== "admin" &&
       user?.role !== "owner" &&
       user?.role !== "manager"
     ) {
-      alert("You don't have permission to delete users.");
+      showFeedback(
+        "Access Denied",
+        "You don't have permission to delete users.",
+        "error"
+      );
       return;
     }
 
@@ -839,13 +1019,21 @@ export default function Dashboard() {
           fetchUsers();
           setShowDeleteModal(false);
           setSelectedEmployee(null);
-          alert("User deleted successfully!");
+          showFeedback("Success!", "User deleted successfully!", "success");
         } else {
-          alert(data.message || "Failed to delete user");
+          showFeedback(
+            "Error",
+            data.message || "Failed to delete user",
+            "error"
+          );
         }
       } catch (error) {
         console.error("Error deleting user:", error);
-        alert("Error deleting user. Please try again.");
+        showFeedback(
+          "Error",
+          "Error deleting user. Please try again.",
+          "error"
+        );
       }
     }
   };
@@ -884,15 +1072,11 @@ export default function Dashboard() {
     }
   };
 
-  // Format number with commas for thousands separator
-  // Format number with commas for thousands separator - UPDATED
   const formatNumber = (num) => {
-    // Convert to number if it's not already
     const number = typeof num === "string" ? parseFloat(num) : num;
 
     if (isNaN(number)) return "0";
 
-    // For money (with 2 decimal places)
     if (number % 1 !== 0) {
       return number.toLocaleString("en-US", {
         minimumFractionDigits: 2,
@@ -900,12 +1084,9 @@ export default function Dashboard() {
       });
     }
 
-    // For whole numbers (like item count)
     return number.toLocaleString("en-US");
   };
 
-  // For peso formatting specifically (with ₱ sign)
-  // Sa Dashboard component, tiyakin na gumagana ang formatPeso
   const formatPeso = (amount) => {
     const number = typeof amount === "string" ? parseFloat(amount) : amount;
 
@@ -968,7 +1149,7 @@ export default function Dashboard() {
             {/* Welcome Message */}
             <div
               className="mb-6 rounded-xl shadow-lg p-6"
-              style={{ backgroundColor: "#F64E60" }}
+              style={{ backgroundColor: "#FF001B" }}
             >
               <h1 className="text-2xl font-bold text-white">
                 Welcome, {user?.username || user?.email || "User"}!
@@ -1073,6 +1254,7 @@ export default function Dashboard() {
                   </div>
                 )}
 
+                {/* Buttons section - Attendance button added here */}
                 <button
                   onClick={() => {
                     fetchOrders();
@@ -1092,17 +1274,25 @@ export default function Dashboard() {
                   />
                   Refresh All
                 </button>
-                <button className="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 flex items-center gap-2 shadow-sm transition-all hover:shadow">
-                  <Package size={16} />
+
+                {/* Attendance Button - Mag-navigate sa Attendance.jsx */}
+                <button
+                  onClick={handleGoToAttendance}
+                  className="px-4 py-2 bg-gradient-to-r from-purple-500 to-purple-600 hover:from-purple-600 hover:to-purple-700 text-white font-medium rounded-lg shadow-md hover:shadow-lg transition-all flex items-center gap-2"
+                >
+                  <Clock size={16} />
                   Attendance
                 </button>
               </div>
             </div>
 
             {/* Stats Cards */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
               {/* Card 1: Gross Sales */}
-              <div className="bg-gradient-to-br from-pink-50 to-pink-100 rounded-xl p-6 border border-pink-200 transform transition-all hover:scale-105 hover:shadow-lg">
+              <div
+                className=" rounded-xl p-6  transform transition-all hover:scale-105 hover:shadow-lg"
+                style={{ backgroundColor: "#FF5C6E" }}
+              >
                 <div className="flex items-center justify-between mb-4">
                   <div className="w-12 h-12 bg-pink-200 rounded-lg flex items-center justify-center">
                     <DollarSign className="text-pink-600" size={24} />
@@ -1124,25 +1314,62 @@ export default function Dashboard() {
                   </div>
                 ) : (
                   <>
-                    <div className="text-3xl font-bold text-gray-800 mb-1">
-                      ₱{formatNumber(stats.totalSales)}
+                    <div className="text-3xl font-bold text-white mb-1">
+                      ₱{formatNumber(stats.grossSales)}
                     </div>
-                    <div className="text-sm text-gray-600 mb-2">
-                      Gross Sales
+                    <div className="text-sm text-white mb-2">Net Sales</div>
+                    <div className="text-xs text-white font-medium">
+                      <p>All Time</p>
                     </div>
-                    <div className="text-xs text-pink-600 font-medium">
-                      {selectedBranchFilter === "all"
-                        ? "All branches"
-                        : selectedBranchFilter}
+                  </>
+                )}
+              </div>
+
+              {/* Card 2: Net Sales */}
+              <div
+                className=" rounded-xl p-6  transform transition-all hover:scale-105 hover:shadow-lg"
+                style={{ backgroundColor: "#FEC600" }}
+              >
+                <div className="flex items-center justify-between mb-4">
+                  <div className="w-12 h-12 bg-white rounded-lg flex items-center justify-center">
+                    <DollarSign className="text-pink-600" size={24} />
+                  </div>
+                  {(user?.role === "admin" || user?.role === "owner") &&
+                    selectedBranchFilter !== "all" && (
+                      <span className="text-xs bg-white px-2 py-1 rounded-full font-medium text-pink-600 border border-pink-300">
+                        {selectedBranchFilter}
+                      </span>
+                    )}
+                </div>
+                {ordersLoading ? (
+                  <div className="flex items-center justify-center">
+                    <RefreshCw
+                      size={20}
+                      className="animate-spin text-pink-600"
+                    />
+                    <span className="ml-2 text-gray-600">Loading...</span>
+                  </div>
+                ) : (
+                  <>
+                    <div className="text-3xl font-bold text-white mb-1">
+                      ₱{formatNumber(stats.netSales)}
+                    </div>
+                    <div className="text-sm text-white mb-2">Net Sales</div>
+                    <div className="text-xs text-white font-medium">
+                      Voided: -₱
+                      {formatNumber(stats.voidedAmount)}
                     </div>
                   </>
                 )}
               </div>
 
               {/* Card 2: Today Transactions */}
-              <div className="bg-gradient-to-br from-orange-50 to-orange-100 rounded-xl p-6 border border-orange-200 transform transition-all hover:scale-105 hover:shadow-lg">
+              <div
+                className=" rounded-xl p-6 borde transform transition-all hover:scale-105 hover:shadow-lg"
+                style={{ backgroundColor: "#1E2C2E" }}
+              >
                 <div className="flex items-center justify-between mb-4">
-                  <div className="w-12 h-12 bg-orange-200 rounded-lg flex items-center justify-center">
+                  <div className="w-12 h-12 bg-white rounded-lg flex items-center justify-center">
                     <ShoppingBag className="text-orange-600" size={24} />
                   </div>
                   {(user?.role === "admin" || user?.role === "owner") &&
@@ -1158,32 +1385,40 @@ export default function Dashboard() {
                       size={20}
                       className="animate-spin text-orange-600"
                     />
-                    <span className="ml-2 text-gray-600">Loading...</span>
+                    <span className="ml-2 text-white">Loading...</span>
                   </div>
                 ) : (
                   <>
-                    <div className="text-3xl font-bold text-gray-800 mb-1">
+                    <div className="text-3xl font-bold text-white mb-1">
                       {formatNumber(stats.todayTransactions)}
                     </div>
-                    <div className="text-sm text-gray-600 mb-2">
+                    <div className="text-sm text-white mb-2">
                       Today Transactions
                     </div>
-                    <div className="text-xs text-orange-600 font-medium">
-                      ₱{formatNumber(stats.todaySales)} today
+                    <div className="text-xs text-white font-medium">
+                      Net: ₱{formatNumber(stats.todaySales)} today
+                      {stats.todayVoidedAmount > 0 && (
+                        <span className="block text-orange-300">
+                          Voided: -₱{formatNumber(stats.todayVoidedAmount)}
+                        </span>
+                      )}
                     </div>
                   </>
                 )}
               </div>
 
               {/* Card 3: Inventory Value */}
-              <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-xl p-6 border border-blue-200 transform transition-all hover:scale-105 hover:shadow-lg">
+              <div
+                className="rounded-xl p-6 border border-black transform transition-all hover:scale-105 hover:shadow-lg"
+                style={{ backgroundColor: "#4B3D79" }}
+              >
                 <div className="flex items-center justify-between mb-4">
                   <div className="w-12 h-12 bg-blue-200 rounded-lg flex items-center justify-center">
                     <Package className="text-blue-600" size={24} />
                   </div>
                   {(user?.role === "admin" || user?.role === "owner") &&
                     selectedBranchFilter !== "all" && (
-                      <span className="text-xs bg-white px-2 py-1 rounded-full font-medium text-blue-600 border border-blue-300">
+                      <span className="text-xs bg-white px-2 py-1 rounded-full font-medium text-red-600 border border-red-300">
                         {selectedBranchFilter}
                       </span>
                     )}
@@ -1194,17 +1429,17 @@ export default function Dashboard() {
                       size={20}
                       className="animate-spin text-blue-600"
                     />
-                    <span className="ml-2 text-gray-600">Loading...</span>
+                    <span className="ml-2 text-white">Loading...</span>
                   </div>
                 ) : (
                   <>
-                    <div className="text-3xl font-bold text-gray-800 mb-1">
+                    <div className="text-3xl font-bold text-white mb-1">
                       {formatPeso(inventoryTotal.totalValue)}
                     </div>
-                    <div className="text-sm text-gray-600 mb-2">
+                    <div className="text-sm text-white mb-2">
                       Inventory Value
                     </div>
-                    <div className="text-xs text-blue-600 font-medium">
+                    <div className="text-xs text-white font-medium">
                       {formatNumber(inventoryTotal.itemCount)} items in stock
                     </div>
                   </>
@@ -1212,7 +1447,10 @@ export default function Dashboard() {
               </div>
 
               {/* Card 4: Active Employees */}
-              <div className="bg-gradient-to-br from-purple-50 to-purple-100 rounded-xl p-6 border border-purple-200 transform transition-all hover:scale-105 hover:shadow-lg">
+              <div
+                className="rounded-xl p-6 transform transition-all hover:scale-105 hover:shadow-lg"
+                style={{ backgroundColor: "#A3C47C" }}
+              >
                 <div className="flex items-center justify-between mb-4">
                   <div className="w-12 h-12 bg-purple-200 rounded-lg flex items-center justify-center">
                     <Users className="text-purple-600" size={24} />
@@ -1220,26 +1458,24 @@ export default function Dashboard() {
                   {(user?.role === "admin" || user?.role === "owner") &&
                     selectedBranchFilter !== "all" && (
                       <span className="text-xs bg-white px-2 py-1 rounded-full font-medium text-purple-600 border border-purple-300">
-                        {selectedBorderFilter}
+                        {selectedBranchFilter}
                       </span>
                     )}
                 </div>
-                <div className="text-3xl font-bold text-gray-800 mb-1">
+                <div className="text-3xl font-bold text-white mb-1">
                   {formatNumber(
                     employees.filter((e) => e.status === "Active").length
                   )}
                 </div>
-                <div className="text-sm text-gray-600 mb-2">
-                  Active Employees
-                </div>
-                <div className="text-xs text-purple-600 font-medium">
+                <div className="text-sm text-white mb-2">Active Employees</div>
+                <div className="text-xs text-white font-medium">
                   Currently working
                 </div>
               </div>
             </div>
 
             {/* Main Grid */}
-           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
               <div className="bg-white rounded-xl shadow-lg p-6 border border-gray-100">
                 <div className="flex justify-between items-center mb-4">
                   <div className="flex items-center gap-2">
@@ -1262,19 +1498,19 @@ export default function Dashboard() {
                     </button>
                     <button
                       onClick={() => setShowAnnouncementModal(true)}
-                      className="w-8 h-8 bg-gradient-to-br from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 rounded-lg flex items-center justify-center shadow-md hover:shadow-lg transition-all transform hover:scale-105"
+                      className="w-8 h-8 bg-gradient-to-br from-red-500 to-red-600 hover:from-black hover:to-black rounded-lg flex items-center justify-center shadow-md hover:shadow-lg transition-all transform hover:scale-105"
                     >
                       <Plus className="text-white" size={18} />
                     </button>
                   </div>
                 </div>
 
-                <div className="space-y-3 max-h-96 overflow-y-auto pr-2 custom-scrollbar">
+                <div className="space-y-4 max-h-96 overflow-y-auto pr-2 custom-scrollbar">
                   {announcementsLoading ? (
                     <div className="flex justify-center items-center py-8">
                       <RefreshCw
                         size={24}
-                        className="animate-spin text-blue-500"
+                        className="animate-spin text-red-500"
                       />
                       <span className="ml-2 text-gray-600">
                         Loading announcements...
@@ -1288,53 +1524,61 @@ export default function Dashboard() {
                     announcements.map((announcement) => (
                       <div
                         key={announcement.id}
-                        className={`${
-                          announcement.is_global
-                            ? "bg-gradient-to-r from-purple-50 to-pink-50 border-2 border-purple-300"
-                            : `bg-${announcement.color}-50 border border-${announcement.color}-200`
-                        } rounded-lg p-4 hover:shadow-md transition-all transform hover:-translate-y-0.5`}
+                        className="bg-white rounded-lg border border-gray-200 shadow-sm hover:shadow-md transition-shadow duration-200"
                       >
-                        <div className="flex items-start gap-3">
-                          <div
-                            className={`w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 shadow-sm ${
-                              announcement.is_global
-                                ? "bg-gradient-to-br from-purple-500 to-pink-500"
-                                : `bg-gradient-to-br from-${announcement.color}-400 to-${announcement.color}-600`
-                            }`}
-                          >
-                            <announcement.icon
-                              className="text-white"
-                              size={18}
-                            />
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <div className="flex justify-between items-start">
-                              <div className="flex items-center gap-2">
-                                <h4 className="font-semibold text-gray-800 text-sm mb-1">
-                                  {announcement.title}
+                        {/* Announcement Header */}
+                        <div className="p-4 border-b border-gray-100">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-3">
+                              <div>
+                                <h4 className="font-semibold text-gray-800 text-sm">
+                                  {announcement.author}
                                 </h4>
-                                {announcement.is_global && (
-                                  <span className="text-xs bg-gradient-to-r from-purple-500 to-pink-500 text-white px-2 py-1 rounded-full font-bold">
-                                    GLOBAL
+                                <div className="flex items-center gap-2">
+                                  <span className="text-xs text-gray-500">
+                                    {announcement.time}
                                   </span>
-                                )}
+                                  {announcement.is_global && (
+                                    <span className="text-xs bg-blue-100 text-blue-600 px-2 py-0.5 rounded-full">
+                                      Global
+                                    </span>
+                                  )}
+                                  {!announcement.is_global &&
+                                    announcement.branch && (
+                                      <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">
+                                        {announcement.branch}
+                                      </span>
+                                    )}
+                                </div>
                               </div>
-                              {announcement.branch &&
-                                !announcement.is_global && (
-                                  <span className="text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded-full">
-                                    {announcement.branch}
-                                  </span>
-                                )}
                             </div>
-                            <p className="text-xs text-gray-600 mb-2 line-clamp-2">
-                              {announcement.message}
-                            </p>
-                            <div className="flex justify-between items-center">
-                              <span className="text-xs text-gray-500 font-medium">
-                                {announcement.time}
-                              </span>
-                              <span className="text-xs text-gray-500">
-                                by {announcement.author}
+                            <button className="text-gray-400 hover:text-gray-600">
+                              <MoreVertical size={18} />
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Announcement Content */}
+                        <div className="p-4">
+                          <h3 className="font-bold text-gray-800 text-lg mb-2">
+                            {announcement.title}
+                          </h3>
+                          <p className="text-gray-700 text-sm mb-3">
+                            {announcement.message}
+                          </p>
+                          <div className="flex items-center gap-2 mt-2">
+                            <div
+                              className={`flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${getAnnouncementBgColor(
+                                announcement.type
+                              )} ${getAnnouncementColor(announcement.type)}`}
+                            >
+                              <announcement.icon size={12} />
+                              <span>
+                                {announcement.type === "info"
+                                  ? "Information"
+                                  : announcement.type === "success"
+                                  ? "Good News"
+                                  : "Important Notice"}
                               </span>
                             </div>
                           </div>
@@ -1365,7 +1609,6 @@ export default function Dashboard() {
                     Refresh
                   </button>
 
-                  {/* "Add User" button - visible only to admin/owner/manager */}
                   {(user?.role === "admin" ||
                     user?.role === "owner" ||
                     user?.role === "manager") && (
@@ -1382,7 +1625,7 @@ export default function Dashboard() {
 
               {loading ? (
                 <div className="flex justify-center items-center py-8">
-                  <RefreshCw size={24} className="animate-spin text-blue-500" />
+                  <RefreshCw size={24} className="animate-spin text-red-500" />
                   <span className="ml-2 text-gray-600">Loading users...</span>
                 </div>
               ) : (
@@ -1416,11 +1659,6 @@ export default function Dashboard() {
                         </th>
                         <th className="text-left py-3 px-4 text-sm font-semibold text-gray-700">
                           Actions
-                          {user?.role !== "admin" && user?.role !== "owner" && (
-                            <span className="text-xs font-normal text-gray-500 ml-2">
-                              (Read only)
-                            </span>
-                          )}
                         </th>
                       </tr>
                     </thead>
@@ -1429,7 +1667,7 @@ export default function Dashboard() {
                       {employees.length === 0 ? (
                         <tr>
                           <td
-                            colSpan="8"
+                            colSpan="9"
                             className="py-8 text-center text-gray-500"
                           >
                             No users found
@@ -1468,7 +1706,7 @@ export default function Dashboard() {
                                   employee.role === "admin"
                                     ? "bg-purple-100 text-purple-700 border border-purple-200"
                                     : employee.role === "manager"
-                                    ? "bg-blue-100 text-blue-700 border border-blue-200"
+                                    ? "bg-blue-100 text-red-700 border border-red-200"
                                     : "bg-green-100 text-green-700 border border-green-200"
                                 }`}
                               >
@@ -1485,7 +1723,7 @@ export default function Dashboard() {
                                   <span className="inline-flex items-center px-2 py-1 rounded text-xs font-medium bg-gray-100 text-gray-600">
                                     Not Required
                                   </span>
-                                ) : employee.void_pin ? (
+                                ) : hasValidVoidPin(employee) ? (
                                   <div className="flex items-center gap-1">
                                     <div className="w-2 h-2 rounded-full bg-green-500"></div>
                                     <span className="inline-flex items-center px-2 py-1 rounded text-xs font-medium bg-green-50 text-green-700 border border-green-200">
@@ -1538,7 +1776,6 @@ export default function Dashboard() {
                             </td>
                             <td className="py-4 px-4">
                               <div className="flex items-center gap-2">
-                                {/* Show Edit/Delete buttons for admin/owner/manager */}
                                 {user?.role === "admin" ||
                                 user?.role === "owner" ||
                                 user?.role === "manager" ? (
@@ -1547,7 +1784,7 @@ export default function Dashboard() {
                                       onClick={() =>
                                         handleEditEmployee(employee)
                                       }
-                                      className="p-2 bg-blue-50 hover:bg-blue-100 text-blue-600 rounded-lg transition-colors"
+                                      className="p-2 bg-blue-50 hover:bg-red-100 text-blue-600 rounded-lg transition-colors"
                                       title="Edit User"
                                     >
                                       <Edit size={16} />
@@ -1640,7 +1877,7 @@ export default function Dashboard() {
                 >
                   <option value="info">Info (Blue)</option>
                   <option value="success">Success (Green)</option>
-                  <option value="warning">Warning (Purple)</option>
+                  <option value="warning">Warning (Yellow)</option>
                 </select>
               </div>
 
@@ -1681,18 +1918,18 @@ export default function Dashboard() {
               </div>
 
               {user?.role === "admin" || user?.role === "owner" ? (
-                <div className="bg-gradient-to-r from-purple-50 to-pink-50 p-3 rounded-lg border-2 border-purple-300">
-                  <p className="text-sm text-purple-700 font-bold">
+                <div className="bg-gradient-to-r from-blue-50 to-blue-100 p-3 rounded-lg border-2 border-blue-200">
+                  <p className="text-sm text-blue-700 font-bold">
                     <span className="font-extrabold">GLOBAL ANNOUNCEMENT</span>{" "}
                     - This will be visible to ALL branches automatically
                   </p>
-                  <p className="text-xs text-purple-600 mt-1">
+                  <p className="text-xs text-blue-600 mt-1">
                     (As Owner/Admin, your posts are automatically global)
                   </p>
                 </div>
               ) : (
-                <div className="bg-blue-50 p-3 rounded-lg">
-                  <p className="text-sm text-blue-700 font-medium">
+                <div className="bg-gray-50 p-3 rounded-lg border-2 border-gray-200">
+                  <p className="text-sm text-gray-700 font-medium">
                     This announcement will be posted to:{" "}
                     <span className="font-bold">{user?.branch}</span> branch
                     only
@@ -1719,7 +1956,7 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Add User Modal - Only accessible to admin/owner */}
+      {/* Add User Modal */}
       {showAddUserModal &&
         (user?.role === "admin" ||
           user?.role === "owner" ||
@@ -1887,6 +2124,7 @@ export default function Dashboard() {
           </div>
         )}
 
+      {/* Edit User Modal */}
       {showEditModal &&
         selectedEmployee &&
         (user?.role === "admin" ||
@@ -1966,7 +2204,6 @@ export default function Dashboard() {
                   </select>
                 </div>
 
-                {/* VOID PIN FIELD FOR EXISTING USER - ADD THIS SECTION */}
                 {(selectedEmployee.role === "manager" ||
                   selectedEmployee.role === "admin") && (
                   <div className="bg-yellow-50 border border-yellow-200 p-4 rounded-lg">
@@ -2080,7 +2317,7 @@ export default function Dashboard() {
                     </p>
                     {selectedEmployee.role === "manager" ||
                     selectedEmployee.role === "admin" ? (
-                      selectedEmployee.void_pin ? (
+                      hasValidVoidPin(selectedEmployee) ? (
                         <p className="text-green-600">
                           <strong>Void PIN:</strong> Set (●●●●)
                         </p>
@@ -2109,7 +2346,7 @@ export default function Dashboard() {
                   </button>
                   <button
                     onClick={handleUpdateEmployee}
-                    className="flex-1 px-4 py-2.5 bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white font-medium rounded-lg shadow-md hover:shadow-lg transition-all transform hover:scale-105"
+                    className="flex-1 px-4 py-2.5 bg-gradient-to-r from-red-600 to-red-600 hover:from-red-600 hover:to-red-600 text-white font-medium rounded-lg shadow-md hover:shadow-lg transition-all transform hover:scale-105"
                   >
                     Update
                   </button>
@@ -2119,7 +2356,7 @@ export default function Dashboard() {
           </div>
         )}
 
-      {/* Delete Confirmation Modal - Only accessible to admin/owner */}
+      {/* Delete Confirmation Modal */}
       {showDeleteModal &&
         selectedEmployee &&
         (user?.role === "admin" ||
@@ -2181,6 +2418,9 @@ export default function Dashboard() {
             </div>
           </div>
         )}
+
+      {/* Feedback Modal */}
+      <FeedbackModal />
     </div>
   );
 }

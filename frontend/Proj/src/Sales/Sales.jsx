@@ -78,42 +78,66 @@ const Sales = () => {
   }, [isAdminOrOwner]);
 
   // Fetch all sales data for admin/owner
-  const fetchAllSales = async () => {
-    try {
-      const res = await api.get("/admin/all-orders");
-      setAllSales(res.data);
+const fetchAllSales = async () => {
+  try {
+    const res = await api.get("/admin/all-orders");
+    setAllSales(res.data);
 
-      // Also fetch filtered sales for current branch
-      if (selectedBranch !== "all") {
-        const filtered = res.data.filter(
-          (sale) => sale.branch === selectedBranch
-        );
-        setSales(filtered);
-      } else {
-        setSales(res.data);
-      }
-    } catch (err) {
-      console.error("Error fetching all sales:", err);
-      if (err.response?.status === 401) {
-        alert("Please login again.");
-        window.location.href = "/login";
-      }
+    const salesWithUsername = res.data.map((sale) => ({
+      ...sale,
+      cashier: sale.cashier_name || sale.cashier || "Unknown",
+      // Add voided_by_user with username
+      voided_by_user: sale.voided_by_username
+        ? {
+            username: sale.voided_by_username,
+            email: sale.voided_by_email,
+            role: sale.voided_by_role, // if available
+          }
+        : null,
+    }));
+
+    if (selectedBranch !== "all") {
+      const filtered = salesWithUsername.filter(
+        (sale) => sale.branch === selectedBranch
+      );
+      setSales(filtered);
+    } else {
+      setSales(salesWithUsername);
     }
-  };
+  } catch (err) {
+    console.error("Error fetching all sales:", err);
+    if (err.response?.status === 401) {
+      alert("Please login again.");
+      window.location.href = "/login";
+    }
+  }
+};
 
   // Fetch sales for regular users (branch-filtered)
-  const fetchSales = async () => {
-    try {
-      const res = await api.get("/orders");
-      setSales(res.data);
-    } catch (err) {
-      console.error("Error fetching sales:", err);
-      if (err.response?.status === 401) {
-        alert("Please login again.");
-        window.location.href = "/login";
-      }
+const fetchSales = async () => {
+  try {
+    const res = await api.get("/orders");
+    const salesWithUsername = res.data.map((sale) => ({
+      ...sale,
+      cashier: sale.cashier_name || sale.cashier || "Unknown",
+      // Add voided_by_user with username
+      voided_by_user: sale.voided_by_username
+        ? {
+            username: sale.voided_by_username,
+            email: sale.voided_by_email,
+            role: sale.voided_by_role, // if available
+          }
+        : null,
+    }));
+    setSales(salesWithUsername);
+  } catch (err) {
+    console.error("Error fetching sales:", err);
+    if (err.response?.status === 401) {
+      alert("Please login again.");
+      window.location.href = "/login";
     }
-  };
+  }
+};
 
   // Fetch all branches for admin/owner dropdown
   const fetchAllBranches = async () => {
@@ -509,15 +533,25 @@ const Sales = () => {
         is_void: true,
         void_reason: voidReason,
         voided_at: new Date().toISOString(),
-        voided_by_user: verifyingUser || user,
+        voided_by_user: {
+          ...(verifyingUser || user),
+          // Ensure username is included
+          username:
+            verifyingUser?.username ||
+            verifyingUser?.email?.split("@")[0] ||
+            user?.username ||
+            user?.email?.split("@")[0] ||
+            "Admin",
+        },
       };
 
       // If cashier, include the authorized manager info
       if (user?.role === "cashier" && verifyingUser) {
-        voidData.voided_by = verifyingUser.email;
+        voidData.voided_by = verifyingUser.username || verifyingUser.email;
         voidData.void_authorized_by = verifyingUser;
       } else {
-        voidData.voided_by = user?.name || user?.email || "Admin";
+        voidData.voided_by =
+          user?.username || user?.email?.split("@")[0] || "Admin";
       }
 
       const response = await api.put(
@@ -539,7 +573,15 @@ const Sales = () => {
                     is_void: true,
                     void_reason: voidReason,
                     voided_by: voidedByName,
-                    voided_by_user: verifyingUser || user,
+                    voided_by_user: {
+                      ...(verifyingUser || user),
+                      username:
+                        verifyingUser?.username ||
+                        verifyingUser?.email?.split("@")[0] ||
+                        user?.username ||
+                        user?.email?.split("@")[0] ||
+                        "Admin",
+                    },
                     voided_at: new Date().toISOString(),
                     cashier: order.cashier,
                   }
@@ -557,7 +599,15 @@ const Sales = () => {
                   is_void: true,
                   void_reason: voidReason,
                   voided_by: voidedByName,
-                  voided_by_user: verifyingUser || user,
+                  voided_by_user: {
+                    ...(verifyingUser || user),
+                    username:
+                      verifyingUser?.username ||
+                      verifyingUser?.email?.split("@")[0] ||
+                      user?.username ||
+                      user?.email?.split("@")[0] ||
+                      "Admin",
+                  },
                   voided_at: new Date().toISOString(),
                   cashier: order.cashier,
                 }
@@ -619,7 +669,7 @@ const Sales = () => {
 
     // Create receipt text function
     const createReceiptText = (receipt) => {
-      const cashierName = receipt.cashier || "N/A";
+     const cashierName = receipt.cashier_name || receipt.cashier || "N/A";
       const isVoided = isOrderVoided(receipt);
 
       let receiptText = `
@@ -2005,29 +2055,27 @@ Items:
       // Table Headers - Add Branch column for admin
       const headers = isAdminOrOwner
         ? [
-            "Order ID",
             "Branch",
-            "Products",
-            "Total Amount",
-            "Discount Applied",
-            "Amount Paid",
-            "Change",
-            "Cashier",
-            "Order Type",
-            "Payment Method",
-            "Transaction Time",
+            "Cashier", // CHANGED: From "Cashier Email" to "Cashier"
+            "Login Time",
+            "Logout Time",
+            "Session Duration",
+            "Starting Gross Sales",
+            "Ending Gross Sales",
+            "Sales During Session",
+            "Discount & Void Summary",
+            "Action",
           ]
         : [
-            "Order ID",
-            "Products",
-            "Total Amount",
-            "Discount Applied",
-            "Amount Paid",
-            "Change",
-            "Cashier",
-            "Order Type",
-            "Payment Method",
-            "Transaction Time",
+            "Cashier", // CHANGED: From "Cashier Email" to "Cashier"
+            "Login Time",
+            "Logout Time",
+            "Session Duration",
+            "Starting Gross Sales",
+            "Ending Gross Sales",
+            "Sales During Session",
+            "Discount & Void Summary",
+            "Action",
           ];
 
       const headerRow = worksheet.addRow(headers);
@@ -2055,36 +2103,39 @@ Items:
           ? (parseFloat(sale.total) / 0.8) * 0.2
           : 0;
 
-        const rowData = isAdminOrOwner
-          ? [
-              sale.id,
-              sale.branch || "Unknown",
-              formatProductNames(sale),
-              parseFloat(sale.total),
-              sale.discountApplied
-                ? `₱${discountAmount.toFixed(2)} (20%)`
-                : "None",
-              parseFloat(sale.paidAmount),
-              parseFloat(sale.changeAmount),
-              sale.cashier || "Unknown",
-              sale.orderType,
-              sale.payment_method || "Unknown",
-              new Date(sale.created_at).toLocaleString("en-PH"),
-            ]
-          : [
-              sale.id,
-              formatProductNames(sale),
-              parseFloat(sale.total),
-              sale.discountApplied
-                ? `₱${discountAmount.toFixed(2)} (20%)`
-                : "None",
-              parseFloat(sale.paidAmount),
-              parseFloat(sale.changeAmount),
-              sale.cashier || "Unknown",
-              sale.orderType,
-              sale.payment_method || "Unknown",
-              new Date(sale.created_at).toLocaleString("en-PH"),
-            ];
+        // In exportToExcel function, find the sales data rows section
+        // REPLACE THE ROWDATA ARRAYS:
+
+      const rowData = isAdminOrOwner
+        ? [
+            sale.id,
+            sale.branch || "Unknown",
+            formatProductNames(sale),
+            parseFloat(sale.total),
+            sale.discountApplied
+              ? `₱${discountAmount.toFixed(2)} (20%)`
+              : "None",
+            parseFloat(sale.paidAmount),
+            parseFloat(sale.changeAmount),
+            sale.cashier_name || sale.cashier || "Unknown", // CHANGED HERE
+            sale.orderType,
+            sale.payment_method || "Unknown",
+            new Date(sale.created_at).toLocaleString("en-PH"),
+          ]
+        : [
+            sale.id,
+            formatProductNames(sale),
+            parseFloat(sale.total),
+            sale.discountApplied
+              ? `₱${discountAmount.toFixed(2)} (20%)`
+              : "None",
+            parseFloat(sale.paidAmount),
+            parseFloat(sale.changeAmount),
+            sale.cashier_name || sale.cashier || "Unknown", // CHANGED HERE
+            sale.orderType,
+            sale.payment_method || "Unknown",
+            new Date(sale.created_at).toLocaleString("en-PH"),
+          ];
 
         const row = worksheet.addRow(rowData);
 
@@ -2149,12 +2200,12 @@ Items:
         worksheet.getColumn(10).width = 18;
       }
     } else {
-      // CASHIER REPORT EXPORT LOGIC
-      const totalSessions = filteredData.length;
-      const totalGrossSales = filteredData.reduce(
-        (sum, log) => sum + parseFloat(log.session_sales || 0),
-        0
-      );
+  // CASHIER REPORT EXPORT LOGIC
+  const totalSessions = filteredData.length;
+  const totalGrossSales = filteredData.reduce(
+    (sum, log) => sum + parseFloat(log.session_sales || 0),
+    0
+  );
 
       // IMPORTANT: KALKULAHIN ANG TOTAL DISCOUNT AT TOTAL VOID
       let totalAppliedDiscount = 0;
@@ -2262,30 +2313,30 @@ Items:
       worksheet.addRow([]); // Empty row
 
       // Table Headers
-      const headers = isAdminOrOwner
-        ? [
-            "Branch",
-            "Cashier Email",
-            "Login Time",
-            "Logout Time",
-            "Session Duration",
-            "Starting Gross Sales",
-            "Ending Gross Sales",
-            "Sales During Session",
-            "Discount & Void Summary",
-            "Action",
-          ]
-        : [
-            "Cashier Email",
-            "Login Time",
-            "Logout Time",
-            "Session Duration",
-            "Starting Gross Sales",
-            "Ending Gross Sales",
-            "Sales During Session",
-            "Discount & Void Summary",
-            "Action",
-          ];
+       const headers = isAdminOrOwner
+         ? [
+             "Branch",
+             "Cashier", // CHANGED: From "Cashier Email" to "Cashier"
+             "Login Time",
+             "Logout Time",
+             "Session Duration",
+             "Starting Gross Sales",
+             "Ending Gross Sales",
+             "Sales During Session",
+             "Discount & Void Summary",
+             "Action",
+           ]
+         : [
+             "Cashier", // CHANGED: From "Cashier Email" to "Cashier"
+             "Login Time",
+             "Logout Time",
+             "Session Duration",
+             "Starting Gross Sales",
+             "Ending Gross Sales",
+             "Sales During Session",
+             "Discount & Void Summary",
+             "Action",
+           ];
 
       const headerRow = worksheet.addRow(headers);
 
@@ -2341,36 +2392,36 @@ Items:
           `Void: ₱${sessionVoidAmount.toFixed(2)}` +
           (sessionVoidCount > 0 ? ` (${sessionVoidCount})` : "");
 
-        const rowData = isAdminOrOwner
-          ? [
-              log.branch || "Unknown",
-              log.user_email || "Unknown",
-              new Date(log.login_time).toLocaleString("en-PH"),
-              log.logout_time
-                ? new Date(log.logout_time).toLocaleString("en-PH")
-                : "Still Active",
-              calculateSessionDuration(log.login_time, log.logout_time),
-              parseFloat(log.start_gross_sales || 0),
-              parseFloat(log.end_gross_sales || 0),
-              parseFloat(log.session_sales || 0),
-              discountVoidText,
-              "View Details",
-            ]
-          : [
-              log.user_email || "Unknown",
-              new Date(log.login_time).toLocaleString("en-PH"),
-              log.logout_time
-                ? new Date(log.logout_time).toLocaleString("en-PH")
-                : "Still Active",
-              calculateSessionDuration(log.login_time, log.logout_time),
-              parseFloat(log.start_gross_sales || 0),
-              parseFloat(log.end_gross_sales || 0),
-              parseFloat(log.session_sales || 0),
-              discountVoidText,
-              "View Details",
-            ];
+       const rowData = isAdminOrOwner
+         ? [
+             log.branch || "Unknown",
+             log.user_name || log.user_email || "Unknown", // CHANGED: username first
+             new Date(log.login_time).toLocaleString("en-PH"),
+             log.logout_time
+               ? new Date(log.logout_time).toLocaleString("en-PH")
+               : "Still Active",
+             calculateSessionDuration(log.login_time, log.logout_time),
+             parseFloat(log.start_gross_sales || 0),
+             parseFloat(log.end_gross_sales || 0),
+             parseFloat(log.session_sales || 0),
+             discountVoidText,
+             "View Details",
+           ]
+         : [
+             log.user_name || log.user_email || "Unknown", // CHANGED: username first
+             new Date(log.login_time).toLocaleString("en-PH"),
+             log.logout_time
+               ? new Date(log.logout_time).toLocaleString("en-PH")
+               : "Still Active",
+             calculateSessionDuration(log.login_time, log.logout_time),
+             parseFloat(log.start_gross_sales || 0),
+             parseFloat(log.end_gross_sales || 0),
+             parseFloat(log.session_sales || 0),
+             discountVoidText,
+             "View Details",
+           ];
 
-        const row = worksheet.addRow(rowData);
+       const row = worksheet.addRow(rowData);
 
         row.eachCell((cell, colNumber) => {
           cell.border = {
@@ -2425,7 +2476,7 @@ Items:
       // Column widths
       if (isAdminOrOwner) {
         worksheet.getColumn(1).width = 15;
-        worksheet.getColumn(2).width = 25;
+        worksheet.getColumn(2).width = 20;
         worksheet.getColumn(3).width = 20;
         worksheet.getColumn(4).width = 20;
         worksheet.getColumn(5).width = 18;
@@ -2435,7 +2486,7 @@ Items:
         worksheet.getColumn(9).width = 25;
         worksheet.getColumn(10).width = 15;
       } else {
-        worksheet.getColumn(1).width = 25;
+        worksheet.getColumn(1).width = 20;
         worksheet.getColumn(2).width = 20;
         worksheet.getColumn(3).width = 20;
         worksheet.getColumn(4).width = 18;
@@ -2550,183 +2601,468 @@ Items:
     );
   }
 
-  return (
-    <div className="p-6 min-h-screen">
-      <div className="max-w-7xl mx-auto bg-white p-6 rounded-lg shadow">
-        {/* HEADER WITH BRANCH INFO */}
-        <div className="flex justify-between items-center mb-4">
-          <h1 className="text-2xl font-bold">SALES REPORTS</h1>
-          <div className="flex items-center gap-4"></div>
+return (
+  <div className="p-6 min-h-screen bg-gray-50">
+    <div className="max-w-7xl mx-auto bg-white p-8 rounded-3xl shadow-2xl border border-gray-100">
+      {/* HEADER WITH BRANCH INFO */}
+      <div className="flex justify-between items-center mb-8">
+        <h1 className="text-4xl font-bold text-gray-900">SALES REPORTS</h1>
+        <div className="flex items-center gap-4"></div>
+      </div>
+
+      {/* Report Navigation Headers */}
+      <div className="mb-8 bg-gray-50 p-6 rounded-2xl border border-gray-200">
+        <div className="flex flex-wrap gap-4 justify-center">
+          <button
+            onClick={() => handleReportNavigation("sales")}
+            className={`px-10 py-4 rounded-xl font-bold text-sm transition-all duration-300 ${
+              activeReport === "sales"
+                ? "bg-red-600 text-white shadow-xl shadow-red-200"
+                : "bg-gray-900 text-white hover:bg-gray-800 shadow-lg"
+            }`}
+          >
+            SALES REPORT
+          </button>
+          <button
+            onClick={() => handleReportNavigation("payment-methods")}
+            className={`px-10 py-4 rounded-xl font-bold text-sm transition-all duration-300 ${
+              activeReport === "payment-methods"
+                ? "bg-red-600 text-white shadow-xl shadow-red-200"
+                : "bg-gray-900 text-white hover:bg-gray-800 shadow-lg"
+            }`}
+          >
+            CASHIER REPORT
+          </button>
+
+          <button
+            onClick={() => handleReportNavigation("Void")}
+            className={`px-10 py-4 rounded-xl font-bold text-sm transition-all duration-300 ${
+              activeReport === "Void"
+                ? "bg-red-600 text-white shadow-xl shadow-red-200"
+                : "bg-gray-900 text-white hover:bg-gray-800 shadow-lg"
+            }`}
+          >
+            VOID REPORTS
+          </button>
         </div>
+      </div>
 
-        {/* Report Navigation Headers */}
-        <div className="mb-6 bg-gradient-to-r from-red-50 to-red-100 p-4 rounded-lg border border-red-200">
-          <div className="flex flex-wrap gap-4 justify-center">
-            <button
-              onClick={() => handleReportNavigation("sales")}
-              className={`px-6 py-3 rounded-lg font-semibold text-sm transition-all duration-200 ${
-                activeReport === "sales"
-                  ? "bg-red-600 text-white shadow-lg transform scale-105"
-                  : "bg-white text-gray-700 hover:bg-red-50 border border-red-200"
-              }`}
-            >
-              SALES REPORT
-            </button>
-            <button
-              onClick={() => handleReportNavigation("payment-methods")}
-              className={`px-6 py-3 rounded-lg font-semibold text-sm transition-all duration-200 ${
-                activeReport === "payment-methods"
-                  ? "bg-red-600 text-white shadow-lg transform scale-105"
-                  : "bg-white text-gray-700 hover:bg-red-50 border border-red-200"
-              }`}
-            >
-              CASHIER REPORT
-            </button>
+      {/* Export Options - MODERN DESIGN */}
+      <div className="mb-5 p-2">
+        <h3 className="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2"></h3>
 
-            <button
-              onClick={() => handleReportNavigation("Void")}
-              className={`px-6 py-3 rounded-lg font-semibold text-sm transition-all duration-200 ${
-                activeReport === "Void"
-                  ? "bg-red-600 text-white shadow-lg transform scale-105"
-                  : "bg-white text-gray-700 hover:bg-red-50 border border-red-200"
-              }`}
-            >
-              VOID REPORTS
-            </button>
-          </div>
-        </div>
-
-        {/* Export Options */}
-        <div className="mb-6 p-4 bg-gray-50 rounded-lg">
-          <h3 className="font-semibold mb-3 text-black">Export Options</h3>
-
-          <div className="flex flex-wrap gap-4 items-end">
-            <div>
+        <div className="flex flex-wrap gap-4 items-end">
+          {/* Time Range Selector */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Time Range
+            </label>
+            <div className="relative">
               <select
                 value={exportRange}
                 onChange={(e) => setExportRange(e.target.value)}
-                className="border border-gray-300 rounded px-3 py-2"
+                className="w-40 px-4 py-2.5 bg-white border border-gray-300 rounded-lg text-gray-700 focus:ring-2 focus:ring-red-500 focus:border-red-500 transition-all duration-200 shadow-sm appearance-none cursor-pointer"
               >
                 <option value="all">All Time</option>
                 <option value="today">Today</option>
                 <option value="custom">Custom Range</option>
               </select>
+              <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-gray-700">
+                <svg
+                  className="w-4 h-4"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth="2"
+                    d="M19 9l-7 7-7-7"
+                  />
+                </svg>
+              </div>
             </div>
+          </div>
 
-            {exportRange === "custom" && (
-              <>
-                <div>
-                  <label className="block text-sm font-medium mb-1">
-                    Start Date
-                  </label>
+          {/* Custom Date Range */}
+          {exportRange === "custom" && (
+            <>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Start Date
+                </label>
+                <div className="relative">
                   <input
                     type="date"
                     value={startDate}
                     onChange={(e) => setStartDate(e.target.value)}
-                    className="border border-gray-300 rounded px-3 py-2"
+                    className="px-4 py-2.5 bg-white border border-gray-300 rounded-lg text-gray-700 focus:ring-2 focus:ring-red-500 focus:border-red-500 transition-all duration-200 shadow-sm cursor-pointer"
                   />
                 </div>
-                <div>
-                  <label className="block text-sm font-medium mb-1">
-                    End Date
-                  </label>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  End Date
+                </label>
+                <div className="relative">
                   <input
                     type="date"
                     value={endDate}
                     onChange={(e) => setEndDate(e.target.value)}
-                    className="border border-gray-300 rounded px-3 py-2"
+                    className="px-4 py-2.5 bg-white border border-gray-300 rounded-lg text-gray-700 focus:ring-2 focus:ring-red-500 focus:border-red-500 transition-all duration-200 shadow-sm cursor-pointer"
                   />
                 </div>
-              </>
-            )}
-            {isAdminOrOwner && (
-              <select
-                value={selectedBranch}
-                onChange={(e) => setSelectedBranch(e.target.value)}
-                className="border border-gray-300 rounded px-3 py-2"
-              >
-                <option value="all">All Branches</option>
-                {allBranches
-                  .filter((branch) => branch !== "all")
-                  .map((branch) => (
-                    <option key={branch} value={branch}>
-                      {branch}
-                    </option>
-                  ))}
-              </select>
-            )}
+              </div>
+            </>
+          )}
 
-            <button
-              onClick={exportToExcel}
-              className="bg-red-600 text-white px-6 py-2 rounded-lg hover:bg-black font-medium"
+          {/* Branch Filter */}
+          {isAdminOrOwner && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Branch
+              </label>
+              <div className="relative">
+                <select
+                  value={selectedBranch}
+                  onChange={(e) => setSelectedBranch(e.target.value)}
+                  className="w-40 px-4 py-2.5 bg-white border border-gray-300 rounded-lg text-gray-700 focus:ring-2 focus:ring-red-500 focus:border-red-500 transition-all duration-200 shadow-sm appearance-none cursor-pointer"
+                >
+                  <option value="all">All Branches</option>
+                  {allBranches
+                    .filter((branch) => branch !== "all")
+                    .map((branch) => (
+                      <option key={branch} value={branch}>
+                        {branch}
+                      </option>
+                    ))}
+                </select>
+                <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-gray-700">
+                  <svg
+                    className="w-4 h-4"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth="2"
+                      d="M19 9l-7 7-7-7"
+                    />
+                  </svg>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Export Button */}
+          <button
+            onClick={exportToExcel}
+            className="px-6 py-2.5 bg-gradient-to-r from-red-600 to-red-700 text-white font-medium rounded-lg hover:from-red-700 hover:to-red-800 transition-all duration-300 transform hover:-translate-y-0.5 hover:shadow-md flex items-center gap-2"
+          >
+            <svg
+              className="w-5 h-5"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
             >
-              Export to Excel
-            </button>
-          </div>
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth="2"
+                d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+              />
+            </svg>
+            Export to Excel
+          </button>
         </div>
+      </div>
 
-        {/* Conditional rendering based on active report */}
-        {activeReport === "sales" && (
-          /* Modern Sales Table */
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead>
-                  <tr className="bg-red-500 text-white">
+      {activeReport === "sales" && (
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="bg-red-500 text-white">
+                  <th className="px-6 py-4 text-left text-sm font-semibold tracking-wide">
+                    #
+                  </th>
+                  {isAdminOrOwner && (
                     <th className="px-6 py-4 text-left text-sm font-semibold tracking-wide">
-                      #
+                      Branch
                     </th>
+                  )}
+                  <th className="px-3 py-4 text-left text-sm font-semibold tracking-wide">
+                    Date & Time
+                  </th>
+                  <th className="px-6 py-4 text-left text-sm font-semibold tracking-wide">
+                    Products
+                  </th>
+                  <th className="px-6 py-4 text-right text-sm font-semibold tracking-wide">
+                    Total
+                  </th>
+                  <th className="px-6 py-4 text-right text-sm font-semibold tracking-wide">
+                    Paid
+                  </th>
+                  <th className="px-6 py-4 text-right text-sm font-semibold tracking-wide">
+                    Change
+                  </th>
+                  <th className="px-6 py-4 text-left text-sm font-semibold tracking-wide">
+                    Cashier
+                  </th>
+                  <th className="px-6 py-4 text-center text-sm font-semibold tracking-wide">
+                    Order Type
+                  </th>
+                  <th className="px-6 py-4 text-center text-sm font-semibold tracking-wide">
+                    Payment Method
+                  </th>
+                  <th className="px-6 py-4 text-center text-sm font-semibold tracking-wide">
+                    Action
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {currentSales.map((sale, index) => (
+                  <tr
+                    key={sale.id}
+                    className="hover:bg-gradient-to-r hover:from-red-50 hover:to-red-50 transition-colors duration-150"
+                  >
+                    <td className="px-6 py-4 text-sm font-medium text-gray-900">
+                      #{sale.id}
+                      {getVoidBadge(sale)}
+                    </td>
                     {isAdminOrOwner && (
-                      <th className="px-6 py-4 text-left text-sm font-semibold tracking-wide">
-                        Branch
-                      </th>
+                      <td className="px-6 py-4 text-sm font-medium text-blue-700">
+                        {sale.branch || "Unknown"}
+                      </td>
                     )}
-                    <th className="px-3 py-4 text-left text-sm font-semibold tracking-wide">
-                      Date & Time
-                    </th>
-                    <th className="px-6 py-4 text-left text-sm font-semibold tracking-wide">
-                      Products
-                    </th>
-                    <th className="px-6 py-4 text-right text-sm font-semibold tracking-wide">
-                      Total
-                    </th>
-                    <th className="px-6 py-4 text-right text-sm font-semibold tracking-wide">
-                      Paid
-                    </th>
-                    <th className="px-6 py-4 text-right text-sm font-semibold tracking-wide">
-                      Change
-                    </th>
-                    <th className="px-6 py-4 text-left text-sm font-semibold tracking-wide">
-                      Cashier
-                    </th>
-                    <th className="px-6 py-4 text-center text-sm font-semibold tracking-wide">
-                      Order Type
-                    </th>
-                    <th className="px-6 py-4 text-center text-sm font-semibold tracking-wide">
-                      Payment Method
-                    </th>
-                    <th className="px-6 py-4 text-center text-sm font-semibold tracking-wide">
-                      Action
-                    </th>
+                    <td className="px-2 py-1 text-sm text-gray-600">
+                      {new Date(sale.created_at).toLocaleString("en-PH", {
+                        month: "short",
+                        day: "numeric",
+                        year: "numeric",
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                    </td>
+                    <td className="px-6 py-4 text-sm text-gray-700 max-w-xs">
+                      <div
+                        className="line-clamp-2"
+                        title={formatProductNames(sale)}
+                      >
+                        {formatProductNames(sale)}
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 text-sm font-semibold text-gray-900 text-right">
+                      ₱{parseFloat(sale.total).toFixed(2)}
+                    </td>
+                    <td className="px-6 py-4 text-sm text-gray-600 text-right">
+                      ₱{parseFloat(sale.paidAmount).toFixed(2)}
+                    </td>
+                    <td className="px-6 py-4 text-sm text-gray-600 text-right">
+                      ₱{parseFloat(sale.changeAmount).toFixed(2)}
+                    </td>
+                    <td className="px-6 py-4 text-sm font-medium text-gray-700">
+                      {sale.cashier_name || sale.cashier || "Unknown"}
+                    </td>
+                    <td className="px-6 py-4 text-center">
+                      <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-small text-black">
+                        {sale.orderType}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 text-center">
+                      <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-small  text-black">
+                        {sale.payment_method}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2 text-center">
+                      <div className="flex space-x-2 justify-center">
+                        <button
+                          onClick={() => setShowReceipt(sale)}
+                          className="bg-gradient-to-r from-black to-black text-white px-4 py-2 rounded-lg hover:from-black hover:to-black transition-all duration-200 text-xs font-medium shadow-sm hover:shadow-md"
+                        >
+                          View
+                        </button>
+                        {!isOrderVoided(sale) && (
+                          <button
+                            onClick={() => handleVoidOrder(sale)}
+                            className="bg-gradient-to-r from-red-600 to-red-700 text-white px-4 py-2 rounded-lg hover:from-red-700 hover:to-red-800 transition-all duration-200 text-xs font-medium shadow-sm hover:shadow-md"
+                          >
+                            Void
+                          </button>
+                        )}
+                      </div>
+                    </td>
                   </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                  {currentSales.map((sale, index) => (
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {nonVoidedSales.length === 0 && (
+            <div className="text-center py-12">
+              <p className="text-gray-500 font-medium">
+                {isAdminOrOwner ? (
+                  selectedBranch !== "all" ? (
+                    <>
+                      No sales data available for branch:{" "}
+                      <strong>{selectedBranch}</strong>
+                    </>
+                  ) : (
+                    "No sales data available in any branch"
+                  )
+                ) : (
+                  <>
+                    No sales data available for branch:{" "}
+                    <strong>{user.branch}</strong>
+                  </>
+                )}
+              </p>
+              <p className="text-gray-400 text-sm mt-1">
+                {isAdminOrOwner
+                  ? selectedBranch !== "all"
+                    ? "Sales will appear here once transactions are made in this branch"
+                    : "Sales will appear here once transactions are made in any branch"
+                  : "Sales will appear here once transactions are made in your branch"}
+              </p>
+            </div>
+          )}
+
+          {nonVoidedSales.length > 0 && (
+            <div className="bg-gray-50 px-6 py-4 border-t border-gray-200 flex items-center justify-between">
+              <div className="text-sm text-gray-700">
+                Showing{" "}
+                <span className="font-medium">{indexOfFirstItem + 1}</span> to{" "}
+                <span className="font-medium">
+                  {Math.min(indexOfLastItem, nonVoidedSales.length)}
+                </span>{" "}
+                of <span className="font-medium">{nonVoidedSales.length}</span>{" "}
+                results
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={handlePrevPage}
+                  disabled={currentPage === 1}
+                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                    currentPage === 1
+                      ? "bg-gray-200 text-gray-400 cursor-not-allowed"
+                      : "bg-white text-gray-700 hover:bg-gray-100 border border-gray-300"
+                  }`}
+                >
+                  Previous
+                </button>
+                <div className="flex items-center px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm font-medium text-gray-700">
+                  Page {currentPage} of {totalPages}
+                </div>
+                <button
+                  onClick={handleNextPage}
+                  disabled={currentPage === totalPages}
+                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                    currentPage === totalPages
+                      ? "bg-gray-200 text-gray-400 cursor-not-allowed"
+                      : "bg-gradient-to-r from-red-500 to-red-500 text-white hover:from-black hover:to-black "
+                  }`}
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {activeReport === "payment-methods" && (
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="bg-red-500 text-white">
+                  {isAdminOrOwner && (
+                    <th className="px-6 py-4 text-left text-sm font-semibold tracking-wide">
+                      Branch
+                    </th>
+                  )}
+                  {/* CHANGED: Cashier Username instead of Email */}
+                  <th className="px-6 py-4 text-left text-sm font-semibold tracking-wide">
+                    Cashier
+                  </th>
+                  <th className="px-6 py-4 text-left text-sm font-semibold tracking-wide">
+                    Login Time
+                  </th>
+                  <th className="px-6 py-4 text-left text-sm font-semibold tracking-wide">
+                    Logout Time
+                  </th>
+                  <th className="px-6 py-4 text-center text-sm font-semibold tracking-wide">
+                    Session Duration
+                  </th>
+                  <th className="px-6 py-4 text-right text-sm font-semibold tracking-wide">
+                    Starting Gross Sales
+                  </th>
+                  <th className="px-6 py-4 text-right text-sm font-semibold tracking-wide">
+                    Ending Gross Sales
+                  </th>
+                  <th className="px-6 py-4 text-right text-sm font-semibold tracking-wide">
+                    Sales During Session
+                  </th>
+                  <th className="px-6 py-4 text-right text-sm font-semibold tracking-wide">
+                    Total Discount
+                  </th>
+                  <th className="px-6 py-4 text-right text-sm font-semibold tracking-wide">
+                    Total Void
+                  </th>
+                  <th className="px-6 py-4 text-center text-sm font-semibold tracking-wide">
+                    Action
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {currentCashierLogs.map((log, index) => {
+                  // Calculate discount for this log
+                  const sessionDiscount = log.session_orders
+                    ? log.session_orders.reduce((sum, order) => {
+                        if (order.discountApplied) {
+                          return sum + (parseFloat(order.total) / 0.8) * 0.2;
+                        }
+                        return sum;
+                      }, 0)
+                    : 0;
+
+                  // Calculate void amount for this log
+                  const sessionVoidAmount = sales
+                    .filter(
+                      (order) =>
+                        order.userId === log.user_id &&
+                        isOrderVoided(order) &&
+                        new Date(order.created_at) >=
+                          new Date(log.login_time) &&
+                        (!log.logout_time ||
+                          new Date(order.created_at) <=
+                            new Date(log.logout_time)) &&
+                        order.branch === log.branch
+                    )
+                    .reduce(
+                      (sum, order) => sum + parseFloat(order.total || 0),
+                      0
+                    );
+
+                  return (
                     <tr
-                      key={sale.id}
+                      key={log.id}
                       className="hover:bg-gradient-to-r hover:from-red-50 hover:to-red-50 transition-colors duration-150"
                     >
-                      <td className="px-6 py-4 text-sm font-medium text-gray-900">
-                        #{sale.id}
-                        {getVoidBadge(sale)}
-                      </td>
                       {isAdminOrOwner && (
                         <td className="px-6 py-4 text-sm font-medium text-blue-700">
-                          {sale.branch || "Unknown"}
+                          {log.branch || "Unknown"}
                         </td>
                       )}
-                      <td className="px-2 py-1 text-sm text-gray-600">
-                        {new Date(sale.created_at).toLocaleString("en-PH", {
+                      {/* CHANGED: Display username instead of email */}
+                      <td className="px-6 py-4 text-sm font-medium text-gray-900">
+                        {log.user_name || log.user_email || "Unknown"}
+                      </td>
+                      <td className="px-6 py-4 text-sm text-gray-600">
+                        {new Date(log.login_time).toLocaleString("en-PH", {
                           month: "short",
                           day: "numeric",
                           year: "numeric",
@@ -2734,959 +3070,731 @@ Items:
                           minute: "2-digit",
                         })}
                       </td>
-                      <td className="px-6 py-4 text-sm text-gray-700 max-w-xs">
-                        <div
-                          className="line-clamp-2"
-                          title={formatProductNames(sale)}
-                        >
-                          {formatProductNames(sale)}
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 text-sm font-semibold text-gray-900 text-right">
-                        ₱{parseFloat(sale.total).toFixed(2)}
-                      </td>
-                      <td className="px-6 py-4 text-sm text-gray-600 text-right">
-                        ₱{parseFloat(sale.paidAmount).toFixed(2)}
-                      </td>
-                      <td className="px-6 py-4 text-sm text-gray-600 text-right">
-                        ₱{parseFloat(sale.changeAmount).toFixed(2)}
-                      </td>
-                      <td className="px-6 py-4 text-sm text-gray-700">
-                        {sale.cashier || "Unknown"}
-                      </td>
-                      <td className="px-6 py-4 text-center">
-                        <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-red-100 text-black">
-                          {sale.orderType}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4 text-center">
-                        <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-red-100 text-black">
-                          {sale.payment_method}
-                        </span>
-                      </td>
-                      <td className="px-4 py-2 text-center">
-                        <div className="flex space-x-2 justify-center">
-                          <button
-                            onClick={() => setShowReceipt(sale)}
-                            className="bg-gradient-to-r from-black to-black text-white px-4 py-2 rounded-lg hover:from-black hover:to-black transition-all duration-200 text-xs font-medium shadow-sm hover:shadow-md"
-                          >
-                            View
-                          </button>
-                          {!isOrderVoided(sale) && (
-                            <button
-                              onClick={() => handleVoidOrder(sale)}
-                              className="bg-gradient-to-r from-red-600 to-red-700 text-white px-4 py-2 rounded-lg hover:from-red-700 hover:to-red-800 transition-all duration-200 text-xs font-medium shadow-sm hover:shadow-md"
-                            >
-                              Void
-                            </button>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-            {/* Empty State */}
-            {nonVoidedSales.length === 0 && (
-              <div className="text-center py-12">
-                <p className="text-gray-500 font-medium">
-                  {isAdminOrOwner ? (
-                    selectedBranch !== "all" ? (
-                      <>
-                        No sales data available for branch:{" "}
-                        <strong>{selectedBranch}</strong>
-                      </>
-                    ) : (
-                      "No sales data available in any branch"
-                    )
-                  ) : (
-                    <>
-                      No sales data available for branch:{" "}
-                      <strong>{user.branch}</strong>
-                    </>
-                  )}
-                </p>
-                <p className="text-gray-400 text-sm mt-1">
-                  {isAdminOrOwner
-                    ? selectedBranch !== "all"
-                      ? "Sales will appear here once transactions are made in this branch"
-                      : "Sales will appear here once transactions are made in any branch"
-                    : "Sales will appear here once transactions are made in your branch"}
-                </p>
-              </div>
-            )}
-
-            {/* Pagination */}
-            {nonVoidedSales.length > 0 && (
-              <div className="bg-gray-50 px-6 py-4 border-t border-gray-200 flex items-center justify-between">
-                <div className="text-sm text-gray-700">
-                  Showing{" "}
-                  <span className="font-medium">{indexOfFirstItem + 1}</span> to{" "}
-                  <span className="font-medium">
-                    {Math.min(indexOfLastItem, nonVoidedSales.length)}
-                  </span>{" "}
-                  of{" "}
-                  <span className="font-medium">{nonVoidedSales.length}</span>{" "}
-                  results
-                </div>
-                <div className="flex gap-2">
-                  <button
-                    onClick={handlePrevPage}
-                    disabled={currentPage === 1}
-                    className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                      currentPage === 1
-                        ? "bg-gray-200 text-gray-400 cursor-not-allowed"
-                        : "bg-white text-gray-700 hover:bg-gray-100 border border-gray-300"
-                    }`}
-                  >
-                    Previous
-                  </button>
-                  <div className="flex items-center px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm font-medium text-gray-700">
-                    Page {currentPage} of {totalPages}
-                  </div>
-                  <button
-                    onClick={handleNextPage}
-                    disabled={currentPage === totalPages}
-                    className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                      currentPage === totalPages
-                        ? "bg-gray-200 text-gray-400 cursor-not-allowed"
-                        : "bg-gradient-to-r from-red-500 to-red-500 text-white hover:from-black hover:to-black "
-                    }`}
-                  >
-                    Next
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {activeReport === "payment-methods" && (
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead>
-                  <tr className="bg-red-500 text-white">
-                    {isAdminOrOwner && (
-                      <th className="px-6 py-4 text-left text-sm font-semibold tracking-wide">
-                        Branch
-                      </th>
-                    )}
-                    <th className="px-6 py-4 text-left text-sm font-semibold tracking-wide">
-                      Cashier Email
-                    </th>
-                    <th className="px-6 py-4 text-left text-sm font-semibold tracking-wide">
-                      Login Time
-                    </th>
-                    <th className="px-6 py-4 text-left text-sm font-semibold tracking-wide">
-                      Logout Time
-                    </th>
-                    <th className="px-6 py-4 text-center text-sm font-semibold tracking-wide">
-                      Session Duration
-                    </th>
-                    <th className="px-6 py-4 text-right text-sm font-semibold tracking-wide">
-                      Starting Gross Sales
-                    </th>
-                    <th className="px-6 py-4 text-right text-sm font-semibold tracking-wide">
-                      Ending Gross Sales
-                    </th>
-                    <th className="px-6 py-4 text-right text-sm font-semibold tracking-wide">
-                      Sales During Session
-                    </th>
-                    <th className="px-6 py-4 text-right text-sm font-semibold tracking-wide">
-                      Total Discount
-                    </th>
-                    <th className="px-6 py-4 text-right text-sm font-semibold tracking-wide">
-                      Total Void
-                    </th>
-                    <th className="px-6 py-4 text-center text-sm font-semibold tracking-wide">
-                      Action
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                  {currentCashierLogs.map((log, index) => {
-                    // Calculate discount for this log
-                    const sessionDiscount = log.session_orders
-                      ? log.session_orders.reduce((sum, order) => {
-                          if (order.discountApplied) {
-                            return sum + (parseFloat(order.total) / 0.8) * 0.2;
-                          }
-                          return sum;
-                        }, 0)
-                      : 0;
-
-                    // Calculate void amount for this log
-                    const sessionVoidAmount = sales
-                      .filter(
-                        (order) =>
-                          order.userId === log.user_id &&
-                          isOrderVoided(order) &&
-                          new Date(order.created_at) >=
-                            new Date(log.login_time) &&
-                          (!log.logout_time ||
-                            new Date(order.created_at) <=
-                              new Date(log.logout_time)) &&
-                          order.branch === log.branch
-                      )
-                      .reduce(
-                        (sum, order) => sum + parseFloat(order.total || 0),
-                        0
-                      );
-
-                    return (
-                      <tr
-                        key={log.id}
-                        className="hover:bg-gradient-to-r hover:from-red-50 hover:to-red-50 transition-colors duration-150"
-                      >
-                        {isAdminOrOwner && (
-                          <td className="px-6 py-4 text-sm font-medium text-blue-700">
-                            {log.branch || "Unknown"}
-                          </td>
-                        )}
-                        <td className="px-6 py-4 text-sm font-medium text-gray-900">
-                          {log.user_email || "Unknown"}
-                        </td>
-                        <td className="px-6 py-4 text-sm text-gray-600">
-                          {new Date(log.login_time).toLocaleString("en-PH", {
+                      <td className="px-6 py-4 text-sm text-gray-600">
+                        {log.logout_time ? (
+                          new Date(log.logout_time).toLocaleString("en-PH", {
                             month: "short",
                             day: "numeric",
                             year: "numeric",
                             hour: "2-digit",
                             minute: "2-digit",
-                          })}
-                        </td>
-                        <td className="px-6 py-4 text-sm text-gray-600">
-                          {log.logout_time ? (
-                            new Date(log.logout_time).toLocaleString("en-PH", {
-                              month: "short",
-                              day: "numeric",
-                              year: "numeric",
-                              hour: "2-digit",
-                              minute: "2-digit",
-                            })
-                          ) : (
-                            <span className="text-orange-500 font-medium">
-                              Still Active
-                            </span>
-                          )}
-                        </td>
-                        <td className="px-6 py-4 text-sm text-gray-700 text-center">
-                          {calculateSessionDuration(
-                            log.login_time,
-                            log.logout_time
-                          )}
-                        </td>
-                        <td className="px-6 py-4 text-sm font-semibold text-gray-900 text-right">
-                          ₱{parseFloat(log.start_gross_sales || 0).toFixed(2)}
-                        </td>
-                        <td className="px-6 py-4 text-sm font-semibold text-gray-900 text-right">
-                          ₱{parseFloat(log.end_gross_sales || 0).toFixed(2)}
-                        </td>
-                        <td className="px-6 py-4 text-sm font-semibold text-green-600 text-right">
-                          ₱{parseFloat(log.session_sales || 0).toFixed(2)}
-                        </td>
-                        <td className="px-6 py-4 text-sm font-semibold text-blue-600 text-right">
-                          ₱{sessionDiscount.toFixed(2)}
-                        </td>
-                        <td className="px-6 py-4 text-sm font-semibold text-red-600 text-right">
-                          ₱{sessionVoidAmount.toFixed(2)}
-                        </td>
-                        <td className="px-4 py-2 text-center">
-                          <div className="flex space-x-2 justify-center">
-                            <button
-                              onClick={() => setShowCashierDetails(log)}
-                              className="bg-gradient-to-r from-black to-black text-white px-4 py-2 rounded-lg hover:from-black hover:to-black transition-all duration-200 text-xs font-medium shadow-sm hover:shadow-md"
-                            >
-                              View
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-
-            {/* Empty State */}
-            {getFilteredCashierLogs().length === 0 && (
-              <div className="text-center py-12">
-                <p className="text-gray-500 font-medium">
-                  {isAdminOrOwner ? (
-                    selectedBranch !== "all" ? (
-                      <>
-                        No cashier session data available for branch:{" "}
-                        <strong>{selectedBranch}</strong>
-                      </>
-                    ) : (
-                      "No cashier session data available in any branch"
-                    )
-                  ) : (
-                    <>
-                      No cashier session data available for branch:{" "}
-                      <strong>{user.branch}</strong>
-                    </>
-                  )}
-                </p>
-                <p className="text-gray-400 text-sm mt-1">
-                  {isAdminOrOwner
-                    ? selectedBranch !== "all"
-                      ? "Cashier sessions will appear here once cashiers use the Open/Close POS function in this branch"
-                      : "Cashier sessions will appear here once cashiers use the Open/Close POS function in any branch"
-                    : "Cashier sessions will appear here once cashiers use the Open/Close POS function in your branch"}
-                </p>
-              </div>
-            )}
-
-            {/* Pagination */}
-            {getFilteredCashierLogs().length > 0 && (
-              <div className="bg-gray-50 px-6 py-4 border-t border-gray-200 flex items-center justify-between">
-                <div className="text-sm text-gray-700">
-                  Showing{" "}
-                  <span className="font-medium">
-                    {cashierIndexOfFirstItem + 1}
-                  </span>{" "}
-                  to{" "}
-                  <span className="font-medium">
-                    {Math.min(
-                      cashierIndexOfLastItem,
-                      getFilteredCashierLogs().length
-                    )}
-                  </span>{" "}
-                  of{" "}
-                  <span className="font-medium">
-                    {getFilteredCashierLogs().length}
-                  </span>{" "}
-                  results
-                </div>
-                <div className="flex gap-2">
-                  <button
-                    onClick={handlePrevPage}
-                    disabled={cashierCurrentPage === 1}
-                    className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                      cashierCurrentPage === 1
-                        ? "bg-gray-200 text-gray-400 cursor-not-allowed"
-                        : "bg-white text-gray-700 hover:bg-gray-100 border border-gray-300"
-                    }`}
-                  >
-                    Previous
-                  </button>
-                  <div className="flex items-center px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm font-medium text-gray-700">
-                    Page {cashierCurrentPage} of {cashierTotalPages}
-                  </div>
-                  <button
-                    onClick={handleNextPage}
-                    disabled={cashierCurrentPage === cashierTotalPages}
-                    className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                      cashierCurrentPage === cashierTotalPages
-                        ? "bg-gray-200 text-gray-400 cursor-not-allowed"
-                        : "bg-gradient-to-r from-red-500 to-red-500 text-white hover:from-black hover:to-black "
-                    }`}
-                  >
-                    Next
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {activeReport === "Void" && (
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead>
-                  <tr className="bg-red-500 text-white">
-                    <th className="px-6 py-4 text-left text-sm font-semibold tracking-wide">
-                      Order ID
-                    </th>
-                    {isAdminOrOwner && (
-                      <th className="px-6 py-4 text-left text-sm font-semibold tracking-wide">
-                        Branch
-                      </th>
-                    )}
-                    <th className="px-6 py-4 text-left text-sm font-semibold tracking-wide">
-                      Date Voided
-                    </th>
-                    <th className="px-6 py-4 text-left text-sm font-semibold tracking-wide">
-                      Original Order Date
-                    </th>
-                    <th className="px-6 py-4 text-left text-sm font-semibold tracking-wide">
-                      Products
-                    </th>
-                    <th className="px-6 py-4 text-right text-sm font-semibold tracking-wide">
-                      Total Amount
-                    </th>
-                    <th className="px-6 py-4 text-center text-sm font-semibold tracking-wide">
-                      Order Type
-                    </th>
-                    <th className="px-6 py-4 text-left text-sm font-semibold tracking-wide">
-                      Original Cashier
-                    </th>
-                    <th className="px-6 py-4 text-left text-sm font-semibold tracking-wide">
-                      Voided By
-                    </th>
-                    <th className="px-6 py-4 text-left text-sm font-semibold tracking-wide">
-                      Reason
-                    </th>
-                    <th className="px-6 py-4 text-center text-sm font-semibold tracking-wide">
-                      Action
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                  {sales
-                    .filter((order) => isOrderVoided(order))
-                    .sort((a, b) => {
-                      const dateA = a.voided_at
-                        ? new Date(a.voided_at)
-                        : new Date(a.created_at);
-                      const dateB = b.voided_at
-                        ? new Date(b.voided_at)
-                        : new Date(b.created_at);
-                      return dateB - dateA;
-                    })
-                    .slice(
-                      (currentPage - 1) * itemsPerPage,
-                      currentPage * itemsPerPage
-                    )
-                    .map((order, index) => (
-                      <tr
-                        key={order.id}
-                        className="hover:bg-gradient-to-r hover:from-red-50 hover:to-red-50 transition-colors duration-150"
-                      >
-                        <td className="px-6 py-4 text-sm font-medium text-gray-900">
-                          #{order.id}
-                          <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-red-100 text-red-800 ml-2">
-                            VOIDED
+                          })
+                        ) : (
+                          <span className="text-orange-500 font-medium">
+                            Still Active
                           </span>
-                        </td>
-                        {isAdminOrOwner && (
-                          <td className="px-6 py-4 text-sm font-medium text-blue-700">
-                            {order.branch || "Unknown"}
-                          </td>
                         )}
-                        <td className="px-6 py-4 text-sm text-gray-600">
-                          {order.voided_at
-                            ? new Date(order.voided_at).toLocaleString("en-PH")
-                            : "N/A"}
-                        </td>
-                        <td className="px-6 py-4 text-sm text-gray-600">
-                          {new Date(order.created_at).toLocaleString("en-PH")}
-                        </td>
-                        <td className="px-6 py-4 text-sm text-gray-700 max-w-xs">
-                          <div
-                            className="line-clamp-2"
-                            title={formatProductNames(order)}
-                          >
-                            {formatProductNames(order)}
-                          </div>
-                        </td>
-                        <td className="px-6 py-4 text-sm font-semibold text-gray-900 text-right">
-                          ₱{parseFloat(order.total).toFixed(2)}
-                        </td>
-                        <td className="px-6 py-4 text-center">
-                          <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-red-100 text-black">
-                            {order.orderType}
-                          </span>
-                        </td>
-                        <td className="px-6 py-4 text-sm text-gray-700">
-                          {order.cashier || "Unknown"}
-                        </td>
-                        {/* VOIDED BY - SHOWS WHO VOIDED IT */}
-                        <td className="px-6 py-4 text-sm text-gray-700">
-                          <div>
-                            <span className="font-medium">
-                              {order.voided_by || "Admin"}
-                            </span>
-                            {order.voided_by_user?.role && (
-                              <span className="ml-2 text-xs text-gray-500">
-                                ({order.voided_by_user.role})
-                              </span>
-                            )}
-                          </div>
-                        </td>
-                        <td className="px-6 py-4 text-sm text-gray-700">
-                          <div className="max-w-xs line-clamp-2">
-                            {order.void_reason || "Not specified"}
-                          </div>
-                        </td>
-                        <td className="px-4 py-2 text-center">
+                      </td>
+                      <td className="px-6 py-4 text-sm text-gray-700 text-center">
+                        {calculateSessionDuration(
+                          log.login_time,
+                          log.logout_time
+                        )}
+                      </td>
+                      <td className="px-6 py-4 text-sm font-semibold text-gray-900 text-right">
+                        ₱{parseFloat(log.start_gross_sales || 0).toFixed(2)}
+                      </td>
+                      <td className="px-6 py-4 text-sm font-semibold text-gray-900 text-right">
+                        ₱{parseFloat(log.end_gross_sales || 0).toFixed(2)}
+                      </td>
+                      <td className="px-6 py-4 text-sm font-semibold text-green-600 text-right">
+                        ₱{parseFloat(log.session_sales || 0).toFixed(2)}
+                      </td>
+                      <td className="px-6 py-4 text-sm font-semibold text-blue-600 text-right">
+                        ₱{sessionDiscount.toFixed(2)}
+                      </td>
+                      <td className="px-6 py-4 text-sm font-semibold text-red-600 text-right">
+                        ₱{sessionVoidAmount.toFixed(2)}
+                      </td>
+                      <td className="px-4 py-2 text-center">
+                        <div className="flex space-x-2 justify-center">
                           <button
-                            onClick={() => setShowReceipt(order)}
+                            onClick={() => setShowCashierDetails(log)}
                             className="bg-gradient-to-r from-black to-black text-white px-4 py-2 rounded-lg hover:from-black hover:to-black transition-all duration-200 text-xs font-medium shadow-sm hover:shadow-md"
                           >
-                            View Voided Receipt
+                            View
                           </button>
-                        </td>
-                      </tr>
-                    ))}
-                </tbody>
-              </table>
-            </div>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
 
-            {/* Empty State */}
-            {sales.filter((order) => isOrderVoided(order)).length === 0 && (
-              <div className="text-center py-12">
-                <p className="text-gray-500 font-medium">
-                  {isAdminOrOwner ? (
-                    selectedBranch !== "all" ? (
-                      <>
-                        No voided orders found in branch:{" "}
-                        <strong>{selectedBranch}</strong>
-                      </>
-                    ) : (
-                      "No voided orders found in any branch"
-                    )
-                  ) : (
+          {/* Empty State */}
+          {getFilteredCashierLogs().length === 0 && (
+            <div className="text-center py-12">
+              <p className="text-gray-500 font-medium">
+                {isAdminOrOwner ? (
+                  selectedBranch !== "all" ? (
                     <>
-                      No voided orders found in branch:{" "}
-                      <strong>{user.branch}</strong>
+                      No cashier session data available for branch:{" "}
+                      <strong>{selectedBranch}</strong>
                     </>
-                  )}
-                </p>
-                <p className="text-gray-400 text-sm mt-1">
-                  {isAdminOrOwner
-                    ? selectedBranch !== "all"
-                      ? "Voided orders will appear here once transactions are voided in this branch"
-                      : "Voided orders will appear here once transactions are voided in any branch"
-                    : "Voided orders will appear here once transactions are voided in your branch"}
-                </p>
-              </div>
-            )}
-
-            {/* Pagination */}
-            {sales.filter((order) => isOrderVoided(order)).length > 0 && (
-              <div className="bg-gray-50 px-6 py-4 border-t border-gray-200 flex items-center justify-between">
-                <div className="text-sm text-gray-700">
-                  Showing{" "}
-                  <span className="font-medium">
-                    {Math.min(
-                      (currentPage - 1) * itemsPerPage + 1,
-                      sales.filter((order) => isOrderVoided(order)).length
-                    )}
-                  </span>{" "}
-                  to{" "}
-                  <span className="font-medium">
-                    {Math.min(
-                      currentPage * itemsPerPage,
-                      sales.filter((order) => isOrderVoided(order)).length
-                    )}
-                  </span>{" "}
-                  of{" "}
-                  <span className="font-medium">
-                    {sales.filter((order) => isOrderVoided(order)).length}
-                  </span>{" "}
-                  voided orders
-                </div>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() =>
-                      setCurrentPage((prev) => Math.max(prev - 1, 1))
-                    }
-                    disabled={currentPage === 1}
-                    className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                      currentPage === 1
-                        ? "bg-gray-200 text-gray-400 cursor-not-allowed"
-                        : "bg-white text-gray-700 hover:bg-gray-100 border border-gray-300"
-                    }`}
-                  >
-                    Previous
-                  </button>
-                  <div className="flex items-center px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm font-medium text-gray-700">
-                    Page {currentPage} of{" "}
-                    {Math.ceil(
-                      sales.filter((order) => isOrderVoided(order)).length /
-                        itemsPerPage
-                    )}
-                  </div>
-                  <button
-                    onClick={() =>
-                      setCurrentPage((prev) =>
-                        prev <
-                        Math.ceil(
-                          sales.filter((order) => isOrderVoided(order)).length /
-                            itemsPerPage
-                        )
-                          ? prev + 1
-                          : prev
-                      )
-                    }
-                    disabled={
-                      currentPage ===
-                      Math.ceil(
-                        sales.filter((order) => isOrderVoided(order)).length /
-                          itemsPerPage
-                      )
-                    }
-                    className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                      currentPage ===
-                      Math.ceil(
-                        sales.filter((order) => isOrderVoided(order)).length /
-                          itemsPerPage
-                      )
-                        ? "bg-gray-200 text-gray-400 cursor-not-allowed"
-                        : "bg-gradient-to-r from-red-500 to-red-500 text-white hover:from-black hover:to-black"
-                    }`}
-                  >
-                    Next
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* Receipt Modal */}
-      {showReceipt && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full">
-            {/* Modal Header */}
-            <div
-              className={`flex justify-between items-center ${
-                isOrderVoided(showReceipt)
-                  ? "bg-gradient-to-r from-red-600 to-red-600"
-                  : "bg-gradient-to-r from-red-600 to-red-600"
-              } text-white p-5 rounded-t-2xl`}
-            >
-              <h3 className="text-lg font-bold">
-                {isOrderVoided(showReceipt)
-                  ? "VOIDED RECEIPT"
-                  : "Receipt Preview"}
-              </h3>
-              <button
-                onClick={() => setShowReceipt(null)}
-                className="text-2xl hover:bg-white hover:bg-opacity-20 rounded-lg w-8 h-8 flex items-center justify-center transition-all"
-              >
-                ×
-              </button>
-            </div>
-
-            {/* Receipt Content */}
-            <div
-              className={`p-8 font-mono text-sm ${
-                isOrderVoided(showReceipt) ? "bg-red-50" : "bg-white"
-              }`}
-              ref={receiptPrintRef}
-            >
-              {/* Void Stamp */}
-              {isOrderVoided(showReceipt) && (
-                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                  <div className="text-6xl font-bold text-red-200 transform -rotate-45">
-                    VOIDED
-                  </div>
-                </div>
-              )}
-
-              {/* Header */}
-              <div
-                className={`text-center mb-4 ${
-                  isOrderVoided(showReceipt) ? "relative z-10" : ""
-                }`}
-              >
-                <h1
-                  className={`text-2xl font-bold tracking-wider mb-2 ${
-                    isOrderVoided(showReceipt) ? "text-red-600" : ""
-                  }`}
-                >
-                  K - Street Mc Arthur Highway, Magaspac, Gerona, Tarlac
-                </h1>
-                <div className="border-t-2 border-b-2 border-dashed border-gray-800 py-2 my-2">
-                  {isAdminOrOwner && (
-                    <div className="mb-2">
-                      <span className="font-bold">Branch: </span>
-                      {showReceipt.branch || user?.branch}
-                    </div>
-                  )}
-                  {isOrderVoided(showReceipt) && (
-                    <div className="bg-red-100 border border-red-300 p-2 mb-2 rounded">
-                      <p className="font-bold text-red-700">
-                        VOIDED TRANSACTION
-                      </p>
-                      <p className="text-sm">
-                        Reason: {showReceipt.void_reason || "Not specified"}
-                      </p>
-                      <p className="text-sm">
-                        Voided by: {showReceipt.voided_by || "Admin"}
-                      </p>
-                      <p className="text-sm">
-                        Date:{" "}
-                        {new Date(
-                          showReceipt.voided_at || showReceipt.created_at
-                        ).toLocaleString("en-PH")}
-                      </p>
-                    </div>
-                  )}
-                  <p className="text-base">
-                    Order Type: {showReceipt.orderType}
-                  </p>
-                  <p className="text-sm">
-                    Cashier: {showReceipt.cashier || "Unknown"}
-                  </p>
-                  <p className="text-sm">
-                    Date:{" "}
-                    {new Date(showReceipt.created_at).toLocaleString("en-PH", {
-                      month: "numeric",
-                      day: "numeric",
-                      year: "numeric",
-                      hour: "numeric",
-                      minute: "numeric",
-                      second: "numeric",
-                      hour12: true,
-                    })}
-                  </p>
-                </div>
-              </div>
-
-              {/* Items */}
-              <div
-                className={`mb-4 ${
-                  isOrderVoided(showReceipt) ? "relative z-10" : ""
-                }`}
-              >
-                <h2 className="font-bold text-base mb-2">ITEMS:</h2>
-                <div className="space-y-2">
-                  {getReceiptItems(showReceipt).map((item, index) => (
-                    <div key={item.id || index}>
-                      <div className="flex justify-between">
-                        <span>
-                          {item.name} x{item.quantity}
-                        </span>
-                        <span>
-                          P
-                          {((item.price || 0) * (item.quantity || 1)).toFixed(
-                            2
-                          )}
-                        </span>
-                      </div>
-                      {index < getReceiptItems(showReceipt).length - 1 && (
-                        <div className="border-b border-dashed border-gray-400 my-1"></div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <div className="border-t-2 border-dashed border-gray-800 pt-2 mb-2"></div>
-
-              {/* Total, Paid, Change */}
-              <div
-                className={`space-y-2 text-base ${
-                  isOrderVoided(showReceipt) ? "relative z-10" : ""
-                }`}
-              >
-                <div className="flex justify-between font-bold">
-                  <span>Total:</span>
-                  <span>P{parseFloat(showReceipt.total).toFixed(2)}</span>
-                </div>
-                {showReceipt.discountApplied && (
-                  <div className="flex justify-between">
-                    <span>Discount (20%):</span>
-                    <span className="text-green-600">Applied</span>
-                  </div>
+                  ) : (
+                    "No cashier session data available in any branch"
+                  )
+                ) : (
+                  <>
+                    No cashier session data available for branch:{" "}
+                    <strong>{user.branch}</strong>
+                  </>
                 )}
-                <div className="flex justify-between">
-                  <span>Payment Method:</span>
-                  <span>{showReceipt.payment_method || "Cash"}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Amount Paid:</span>
-                  <span>P{parseFloat(showReceipt.paidAmount).toFixed(2)}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Change:</span>
-                  <span>
-                    P{parseFloat(showReceipt.changeAmount).toFixed(2)}
-                  </span>
-                </div>
+              </p>
+              <p className="text-gray-400 text-sm mt-1">
+                {isAdminOrOwner
+                  ? selectedBranch !== "all"
+                    ? "Cashier sessions will appear here once cashiers use the Open/Close POS function in this branch"
+                    : "Cashier sessions will appear here once cashiers use the Open/Close POS function in any branch"
+                  : "Cashier sessions will appear here once cashiers use the Open/Close POS function in your branch"}
+              </p>
+            </div>
+          )}
+
+          {/* Pagination */}
+          {getFilteredCashierLogs().length > 0 && (
+            <div className="bg-gray-50 px-6 py-4 border-t border-gray-200 flex items-center justify-between">
+              <div className="text-sm text-gray-700">
+                Showing{" "}
+                <span className="font-medium">
+                  {cashierIndexOfFirstItem + 1}
+                </span>{" "}
+                to{" "}
+                <span className="font-medium">
+                  {Math.min(
+                    cashierIndexOfLastItem,
+                    getFilteredCashierLogs().length
+                  )}
+                </span>{" "}
+                of{" "}
+                <span className="font-medium">
+                  {getFilteredCashierLogs().length}
+                </span>{" "}
+                results
               </div>
-
-              <div className="border-t-2 border-dashed border-gray-800 my-4"></div>
-
-              {/* Footer */}
-              <div
-                className={`text-center ${
-                  isOrderVoided(showReceipt) ? "relative z-10" : ""
-                }`}
-              >
-                <p
-                  className={`font-bold text-base ${
-                    isOrderVoided(showReceipt) ? "text-red-600" : ""
+              <div className="flex gap-2">
+                <button
+                  onClick={handlePrevPage}
+                  disabled={cashierCurrentPage === 1}
+                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                    cashierCurrentPage === 1
+                      ? "bg-gray-200 text-gray-400 cursor-not-allowed"
+                      : "bg-white text-gray-700 hover:bg-gray-100 border border-gray-300"
                   }`}
                 >
-                  {isOrderVoided(showReceipt)
-                    ? "This transaction has been voided"
-                    : "Thank you for your order!"}
-                </p>
+                  Previous
+                </button>
+                <div className="flex items-center px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm font-medium text-gray-700">
+                  Page {cashierCurrentPage} of {cashierTotalPages}
+                </div>
+                <button
+                  onClick={handleNextPage}
+                  disabled={cashierCurrentPage === cashierTotalPages}
+                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                    cashierCurrentPage === cashierTotalPages
+                      ? "bg-gray-200 text-gray-400 cursor-not-allowed"
+                      : "bg-gradient-to-r from-red-500 to-red-500 text-white hover:from-black hover:to-black "
+                  }`}
+                >
+                  Next
+                </button>
               </div>
             </div>
-
-            {/* Action Buttons */}
-            <div className="p-5 flex justify-end gap-3 border-t border-gray-100">
-              <button
-                onClick={printReceipt}
-                className="bg-red-600 text-white px-6 py-2.5 rounded-lg hover:bg-black-700 font-medium transition-all duration-200"
-              >
-                Print Receipt
-              </button>
-              {!isOrderVoided(showReceipt) && (
-                <button
-                  onClick={() => handleVoidOrder(showReceipt)}
-                  className="bg-gradient-to-r from-red-600 to-red-700 text-white px-6 py-2.5 rounded-lg hover:from-red-700 hover:to-red-800 font-medium transition-all duration-200"
-                >
-                  Void Order
-                </button>
-              )}
-              <button
-                onClick={() => setShowReceipt(null)}
-                className="bg-gray-100 text-gray-700 px-6 py-2.5 rounded-lg hover:bg-gray-200 font-medium transition-all duration-200"
-              >
-                Close
-              </button>
-            </div>
-          </div>
+          )}
         </div>
       )}
 
-      {/* Cashier Details Modal */}
-      {showCashierDetails && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-6xl w-full max-h-[90vh] overflow-hidden">
-            {/* Modal Header */}
-            <div className="flex justify-between items-center bg-gradient-to-r from-red-600 to-red-700 text-white p-5 rounded-t-2xl">
-              <h3 className="text-lg font-bold">Cashier Session Details</h3>
-              <button
-                onClick={() => setShowCashierDetails(null)}
-                className="text-2xl hover:bg-white hover:bg-opacity-20 rounded-lg w-8 h-8 flex items-center justify-center transition-all"
+      {activeReport === "Void" && (
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="bg-red-500 text-white">
+                  <th className="px-6 py-4 text-left text-sm font-semibold tracking-wide">
+                    Order ID
+                  </th>
+                  {isAdminOrOwner && (
+                    <th className="px-6 py-4 text-left text-sm font-semibold tracking-wide">
+                      Branch
+                    </th>
+                  )}
+                  <th className="px-6 py-4 text-left text-sm font-semibold tracking-wide">
+                    Date Voided
+                  </th>
+                  <th className="px-6 py-4 text-left text-sm font-semibold tracking-wide">
+                    Original Order Date
+                  </th>
+                  <th className="px-6 py-4 text-left text-sm font-semibold tracking-wide">
+                    Products
+                  </th>
+                  <th className="px-6 py-4 text-right text-sm font-semibold tracking-wide">
+                    Total Amount
+                  </th>
+                  <th className="px-6 py-4 text-center text-sm font-semibold tracking-wide">
+                    Order Type
+                  </th>
+                  <th className="px-6 py-4 text-left text-sm font-semibold tracking-wide">
+                    Original Cashier
+                  </th>
+                  <th className="px-6 py-4 text-left text-sm font-semibold tracking-wide">
+                    Voided By
+                  </th>
+                  <th className="px-6 py-4 text-left text-sm font-semibold tracking-wide">
+                    Reason
+                  </th>
+                  <th className="px-6 py-4 text-center text-sm font-semibold tracking-wide">
+                    Action
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {sales
+                  .filter((order) => isOrderVoided(order))
+                  .sort((a, b) => {
+                    const dateA = a.voided_at
+                      ? new Date(a.voided_at)
+                      : new Date(a.created_at);
+                    const dateB = b.voided_at
+                      ? new Date(b.voided_at)
+                      : new Date(b.created_at);
+                    return dateB - dateA;
+                  })
+                  .slice(
+                    (currentPage - 1) * itemsPerPage,
+                    currentPage * itemsPerPage
+                  )
+                  .map((order, index) => (
+                    <tr
+                      key={order.id}
+                      className="hover:bg-gradient-to-r hover:from-red-50 hover:to-red-50 transition-colors duration-150"
+                    >
+                      <td className="px-6 py-4 text-sm font-medium text-gray-900">
+                        #{order.id}
+                        <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-red-100 text-red-800 ml-2">
+                          VOIDED
+                        </span>
+                      </td>
+                      {isAdminOrOwner && (
+                        <td className="px-6 py-4 text-sm font-medium text-blue-700">
+                          {order.branch || "Unknown"}
+                        </td>
+                      )}
+                      <td className="px-6 py-4 text-sm text-gray-600">
+                        {order.voided_at
+                          ? new Date(order.voided_at).toLocaleString("en-PH")
+                          : "N/A"}
+                      </td>
+                      <td className="px-6 py-4 text-sm text-gray-600">
+                        {new Date(order.created_at).toLocaleString("en-PH")}
+                      </td>
+                      <td className="px-6 py-4 text-sm text-gray-700 max-w-xs">
+                        <div
+                          className="line-clamp-2"
+                          title={formatProductNames(order)}
+                        >
+                          {formatProductNames(order)}
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 text-sm font-semibold text-gray-900 text-right">
+                        ₱{parseFloat(order.total).toFixed(2)}
+                      </td>
+                      <td className="px-6 py-4 text-center">
+                        <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-red-100 text-black">
+                          {order.orderType}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 text-sm text-gray-700">
+                        {order.cashier_name || order.cashier || "Unknown"}
+                      </td>
+                      <td className="px-6 py-4 text-sm text-gray-700">
+                        <div>
+                          <span className="font-medium">
+                            {order.voided_by_user?.username ||
+                              order.voided_by_user?.email ||
+                              order.voided_by ||
+                              "Admin"}
+                          </span>
+                          {order.voided_by_user?.role && (
+                            <span className="ml-2 text-xs text-gray-500">
+                              ({order.voided_by_user.role})
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      {/* ADD THIS TD FOR REASON */}
+                      <td className="px-6 py-4 text-sm text-gray-700">
+                        <div className="max-w-xs">
+                          {order.void_reason ? (
+                            <span className="text-gray-800">
+                              {order.void_reason}
+                            </span>
+                          ) : (
+                            <span className="text-gray-500 italic">
+                              No reason provided
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-4 py-2 text-center">
+                        <button
+                          onClick={() => setShowReceipt(order)}
+                          className="bg-gradient-to-r from-black to-black text-white px-4 py-2 rounded-lg hover:from-black hover:to-black transition-all duration-200 text-xs font-medium shadow-sm hover:shadow-md"
+                        >
+                          View Voided Receipt
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+          </div>
+
+          {sales.filter((order) => isOrderVoided(order)).length === 0 && (
+            <div className="text-center py-12">
+              <p className="text-gray-500 font-medium">
+                {isAdminOrOwner ? (
+                  selectedBranch !== "all" ? (
+                    <>
+                      No voided orders found in branch:{" "}
+                      <strong>{selectedBranch}</strong>
+                    </>
+                  ) : (
+                    "No voided orders found in any branch"
+                  )
+                ) : (
+                  <>
+                    No voided orders found in branch:{" "}
+                    <strong>{user.branch}</strong>
+                  </>
+                )}
+              </p>
+              <p className="text-gray-400 text-sm mt-1">
+                {isAdminOrOwner
+                  ? selectedBranch !== "all"
+                    ? "Voided orders will appear here once transactions are voided in this branch"
+                    : "Voided orders will appear here once transactions are voided in any branch"
+                  : "Voided orders will appear here once transactions are voided in your branch"}
+              </p>
+            </div>
+          )}
+
+          {sales.filter((order) => isOrderVoided(order)).length > 0 && (
+            <div className="bg-gray-50 px-6 py-4 border-t border-gray-200 flex items-center justify-between">
+              <div className="text-sm text-gray-700">
+                Showing{" "}
+                <span className="font-medium">
+                  {Math.min(
+                    (currentPage - 1) * itemsPerPage + 1,
+                    sales.filter((order) => isOrderVoided(order)).length
+                  )}
+                </span>{" "}
+                to{" "}
+                <span className="font-medium">
+                  {Math.min(
+                    currentPage * itemsPerPage,
+                    sales.filter((order) => isOrderVoided(order)).length
+                  )}
+                </span>{" "}
+                of{" "}
+                <span className="font-medium">
+                  {sales.filter((order) => isOrderVoided(order)).length}
+                </span>{" "}
+                voided orders
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={() =>
+                    setCurrentPage((prev) => Math.max(prev - 1, 1))
+                  }
+                  disabled={currentPage === 1}
+                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                    currentPage === 1
+                      ? "bg-gray-200 text-gray-400 cursor-not-allowed"
+                      : "bg-white text-gray-700 hover:bg-gray-100 border border-gray-300"
+                  }`}
+                >
+                  Previous
+                </button>
+                <div className="flex items-center px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm font-medium text-gray-700">
+                  Page {currentPage} of{" "}
+                  {Math.ceil(
+                    sales.filter((order) => isOrderVoided(order)).length /
+                      itemsPerPage
+                  )}
+                </div>
+                <button
+                  onClick={() =>
+                    setCurrentPage((prev) =>
+                      prev <
+                      Math.ceil(
+                        sales.filter((order) => isOrderVoided(order)).length /
+                          itemsPerPage
+                      )
+                        ? prev + 1
+                        : prev
+                    )
+                  }
+                  disabled={
+                    currentPage ===
+                    Math.ceil(
+                      sales.filter((order) => isOrderVoided(order)).length /
+                        itemsPerPage
+                    )
+                  }
+                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                    currentPage ===
+                    Math.ceil(
+                      sales.filter((order) => isOrderVoided(order)).length /
+                        itemsPerPage
+                    )
+                      ? "bg-gray-200 text-gray-400 cursor-not-allowed"
+                      : "bg-gradient-to-r from-red-500 to-red-500 text-white hover:from-black hover:to-black"
+                  }`}
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+
+    {/* Receipt Modal */}
+    {showReceipt && (
+      <div className="fixed inset-0 backdrop-blur-sm bg-opacity-50 flex items-center justify-center p-4 z-50">
+        <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full">
+          {/* Modal Header */}
+          <div
+            className={`flex justify-between items-center ${
+              isOrderVoided(showReceipt)
+                ? "bg-gradient-to-r from-red-600 to-red-600"
+                : "bg-gradient-to-r from-red-600 to-red-600"
+            } text-white p-5 rounded-t-2xl`}
+          >
+            <h3 className="text-lg font-bold">
+              {isOrderVoided(showReceipt)
+                ? "VOIDED RECEIPT"
+                : "Receipt Preview"}
+            </h3>
+            <button
+              onClick={() => setShowReceipt(null)}
+              className="text-2xl hover:bg-white hover:bg-opacity-20 rounded-lg w-8 h-8 flex items-center justify-center transition-all"
+            >
+              ×
+            </button>
+          </div>
+
+          {/* Receipt Content */}
+          <div
+            className={`p-8 font-mono text-sm ${
+              isOrderVoided(showReceipt) ? "bg-red-50" : "bg-white"
+            }`}
+            ref={receiptPrintRef}
+          >
+            {/* Void Stamp */}
+            {isOrderVoided(showReceipt) && (
+              <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                <div className="text-6xl font-bold text-red-200 transform -rotate-45">
+                  VOIDED
+                </div>
+              </div>
+            )}
+
+            {/* Header */}
+            <div
+              className={`text-center mb-4 ${
+                isOrderVoided(showReceipt) ? "relative z-10" : ""
+              }`}
+            >
+              <h1
+                className={`text-2xl font-bold tracking-wider mb-2 ${
+                  isOrderVoided(showReceipt) ? "text-red-600" : ""
+                }`}
               >
-                ×
-              </button>
+                K - Street Mc Arthur Highway, Magaspac, Gerona, Tarlac
+              </h1>
+              {/* INSIDE THE RECEIPT MODAL - FIND AND REPLACE THIS SECTION */}
+              <div className="border-t-2 border-b-2 border-dashed border-gray-800 py-2 my-2">
+                {isAdminOrOwner && (
+                  <div className="mb-2">
+                    <span className="font-bold">Branch: </span>
+                    {showReceipt.branch || user?.branch}
+                  </div>
+                )}
+                {isOrderVoided(showReceipt) && (
+                  <div className="bg-red-100 border border-red-300 p-2 mb-2 rounded">
+                    <p className="font-bold text-red-700">VOIDED TRANSACTION</p>
+                    <p className="text-sm">
+                      Reason: {showReceipt.void_reason || "Not specified"}
+                    </p>
+                    <p className="text-sm">
+                      {/* Show username instead of email */}
+                      Voided by:{" "}
+                      {showReceipt.voided_by_user?.username ||
+                        showReceipt.voided_by ||
+                        "Admin"}
+                    </p>
+                    <p className="text-sm">
+                      Date:{" "}
+                      {new Date(
+                        showReceipt.voided_at || showReceipt.created_at
+                      ).toLocaleString("en-PH")}
+                    </p>
+                  </div>
+                )}
+                <p className="text-base">Order Type: {showReceipt.orderType}</p>
+                <p className="text-sm">
+                  Cashier:{" "}
+                  {showReceipt.cashier_name || showReceipt.cashier || "Unknown"}
+                </p>
+                <p className="text-sm">
+                  Date:{" "}
+                  {new Date(showReceipt.created_at).toLocaleString("en-PH", {
+                    month: "numeric",
+                    day: "numeric",
+                    year: "numeric",
+                    hour: "numeric",
+                    minute: "numeric",
+                    second: "numeric",
+                    hour12: true,
+                  })}
+                </p>
+              </div>
             </div>
 
-            {/* Cashier Details Content */}
-            <div className="p-6 overflow-y-auto max-h-[70vh]">
-              <div
-                ref={cashierPrintRef}
-                className="bg-white p-6 rounded-lg border border-gray-200"
-              >
-                {/* Header */}
-                <div className="text-center mb-6">
-                  <h1 className="text-2xl font-bold text-red-600 mb-2">
-                    K - STREET
-                  </h1>
-                  <p className="text-gray-600">
-                    Mc Arthur Highway, Magaspac, Gerona, Tarlac
-                  </p>
-                  <div className="border-t-2 border-b-2 border-dashed border-gray-400 py-3 my-3">
-                    <h2 className="text-xl font-bold text-black">
-                      CASHIER SESSION REPORT
-                    </h2>
+            {/* Items */}
+            <div
+              className={`mb-4 ${
+                isOrderVoided(showReceipt) ? "relative z-10" : ""
+              }`}
+            >
+              <h2 className="font-bold text-base mb-2">ITEMS:</h2>
+              <div className="space-y-2">
+                {getReceiptItems(showReceipt).map((item, index) => (
+                  <div key={item.id || index}>
+                    <div className="flex justify-between">
+                      <span>
+                        {item.name} x{item.quantity}
+                      </span>
+                      <span>
+                        P{((item.price || 0) * (item.quantity || 1)).toFixed(2)}
+                      </span>
+                    </div>
+                    {index < getReceiptItems(showReceipt).length - 1 && (
+                      <div className="border-b border-dashed border-gray-400 my-1"></div>
+                    )}
                   </div>
-                  <p className="text-sm text-gray-500">
-                    Branch: {showCashierDetails.branch || user?.branch}
+                ))}
+              </div>
+            </div>
+
+            <div className="border-t-2 border-dashed border-gray-800 pt-2 mb-2"></div>
+
+            {/* Total, Paid, Change */}
+            <div
+              className={`space-y-2 text-base ${
+                isOrderVoided(showReceipt) ? "relative z-10" : ""
+              }`}
+            >
+              <div className="flex justify-between font-bold">
+                <span>Total:</span>
+                <span>P{parseFloat(showReceipt.total).toFixed(2)}</span>
+              </div>
+              {showReceipt.discountApplied && (
+                <div className="flex justify-between">
+                  <span>Discount (20%):</span>
+                  <span className="text-green-600">Applied</span>
+                </div>
+              )}
+              <div className="flex justify-between">
+                <span>Payment Method:</span>
+                <span>{showReceipt.payment_method || "Cash"}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Amount Paid:</span>
+                <span>P{parseFloat(showReceipt.paidAmount).toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Change:</span>
+                <span>P{parseFloat(showReceipt.changeAmount).toFixed(2)}</span>
+              </div>
+            </div>
+
+            <div className="border-t-2 border-dashed border-gray-800 my-4"></div>
+
+            {/* Footer */}
+            <div
+              className={`text-center ${
+                isOrderVoided(showReceipt) ? "relative z-10" : ""
+              }`}
+            >
+              <p
+                className={`font-bold text-base ${
+                  isOrderVoided(showReceipt) ? "text-red-600" : ""
+                }`}
+              >
+                {isOrderVoided(showReceipt)
+                  ? "This transaction has been voided"
+                  : "Thank you for your order!"}
+              </p>
+            </div>
+          </div>
+
+          {/* Action Buttons */}
+          <div className="p-5 flex justify-end gap-3 border-t border-gray-100">
+            <button
+              onClick={printReceipt}
+              className="bg-red-600 text-white px-6 py-2.5 rounded-lg hover:bg-black-700 font-medium transition-all duration-200"
+            >
+              Print Receipt
+            </button>
+            {!isOrderVoided(showReceipt) && (
+              <button
+                onClick={() => handleVoidOrder(showReceipt)}
+                className="bg-gradient-to-r from-red-600 to-red-700 text-white px-6 py-2.5 rounded-lg hover:from-red-700 hover:to-red-800 font-medium transition-all duration-200"
+              >
+                Void Order
+              </button>
+            )}
+            <button
+              onClick={() => setShowReceipt(null)}
+              className="bg-gray-100 text-gray-700 px-6 py-2.5 rounded-lg hover:bg-gray-200 font-medium transition-all duration-200"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {/* Cashier Details Modal */}
+    {showCashierDetails && (
+      <div className="fixed inset-0 backdrop-blur-sm bg-opacity-50 flex items-center justify-center p-4 z-50">
+        <div className="bg-white rounded-2xl shadow-2xl max-w-6xl w-full max-h-[90vh] overflow-hidden">
+          {/* Modal Header */}
+          <div className="flex justify-between items-center bg-gradient-to-r from-red-600 to-red-700 text-white p-5 rounded-t-2xl">
+            <h3 className="text-lg font-bold">Cashier Session Details</h3>
+            <button
+              onClick={() => setShowCashierDetails(null)}
+              className="text-2xl hover:bg-white hover:bg-opacity-20 rounded-lg w-8 h-8 flex items-center justify-center transition-all"
+            >
+              ×
+            </button>
+          </div>
+
+          {/* Cashier Details Content */}
+          <div className="p-6 overflow-y-auto max-h-[70vh]">
+            <div
+              ref={cashierPrintRef}
+              className="bg-white p-6 rounded-lg border border-gray-200"
+            >
+              {/* Header */}
+              <div className="text-center mb-6">
+                <h1 className="text-2xl font-bold text-red-600 mb-2">
+                  K - STREET
+                </h1>
+                <p className="text-gray-600">
+                  Mc Arthur Highway, Magaspac, Gerona, Tarlac
+                </p>
+                <div className="border-t-2 border-b-2 border-dashed border-gray-400 py-3 my-3">
+                  <h2 className="text-xl font-bold text-black">
+                    CASHIER SESSION REPORT
+                  </h2>
+                </div>
+                <p className="text-sm text-gray-500">
+                  Branch: {showCashierDetails.branch || user?.branch}
+                </p>
+              </div>
+
+              {/* Session Information */}
+              <div className="grid grid-cols-2 gap-4 mb-6">
+                <div className="bg-red-100 p-4 rounded-lg">
+                  <h3 className="font-bold text-black mb-2">
+                    CASHIER INFORMATION
+                  </h3>
+                  {/* CHANGED: Show username first, then email */}
+                  <p>
+                    <strong>Cashier:</strong>{" "}
+                    {showCashierDetails.user_name ||
+                      showCashierDetails.user_email ||
+                      "Unknown"}
+                  </p>
+                  <p>
+                    <strong>Email:</strong> {showCashierDetails.user_email}
+                  </p>
+                  <p>
+                    <strong>Login Time:</strong>{" "}
+                    {new Date(showCashierDetails.login_time).toLocaleString(
+                      "en-PH"
+                    )}
+                  </p>
+                  <p>
+                    <strong>Logout Time:</strong>{" "}
+                    {showCashierDetails.logout_time
+                      ? new Date(showCashierDetails.logout_time).toLocaleString(
+                          "en-PH"
+                        )
+                      : "Still Active"}
+                  </p>
+                  <p>
+                    <strong>Session Duration:</strong>{" "}
+                    {calculateSessionDuration(
+                      showCashierDetails.login_time,
+                      showCashierDetails.logout_time
+                    )}
                   </p>
                 </div>
 
-                {/* Session Information */}
-                <div className="grid grid-cols-2 gap-4 mb-6">
-                  <div className="bg-red-100 p-4 rounded-lg">
-                    <h3 className="font-bold text-black mb-2">
-                      CASHIER INFORMATION
-                    </h3>
-                    <p>
-                      <strong>Email:</strong> {showCashierDetails.user_email}
-                    </p>
-                    <p>
-                      <strong>Login Time:</strong>{" "}
-                      {new Date(showCashierDetails.login_time).toLocaleString(
-                        "en-PH"
-                      )}
-                    </p>
-                    <p>
-                      <strong>Logout Time:</strong>{" "}
-                      {showCashierDetails.logout_time
-                        ? new Date(
-                            showCashierDetails.logout_time
-                          ).toLocaleString("en-PH")
-                        : "Still Active"}
-                    </p>
-                    <p>
-                      <strong>Session Duration:</strong>{" "}
-                      {calculateSessionDuration(
-                        showCashierDetails.login_time,
-                        showCashierDetails.logout_time
-                      )}
-                    </p>
-                  </div>
+                <div className="bg-green-50 p-4 rounded-lg">
+                  <h3 className="font-bold text-green-800 mb-2">
+                    SALES SUMMARY
+                  </h3>
+                  <p>
+                    <strong>Starting Gross Sales:</strong> ₱
+                    {parseFloat(
+                      showCashierDetails.start_gross_sales || 0
+                    ).toFixed(2)}
+                  </p>
+                  <p>
+                    <strong>Ending Gross Sales:</strong> ₱
+                    {parseFloat(
+                      showCashierDetails.end_gross_sales || 0
+                    ).toFixed(2)}
+                  </p>
+                  <p>
+                    <strong>Sales During Session:</strong> ₱
+                    {parseFloat(showCashierDetails.session_sales || 0).toFixed(
+                      2
+                    )}
+                  </p>
+                  <p>
+                    <strong>Total Transactions:</strong>{" "}
+                    {showCashierDetails.session_orders?.length || 0}
+                  </p>
 
-                  <div className="bg-green-50 p-4 rounded-lg">
-                    <h3 className="font-bold text-green-800 mb-2">
-                      SALES SUMMARY
-                    </h3>
-                    <p>
-                      <strong>Starting Gross Sales:</strong> ₱
-                      {parseFloat(
-                        showCashierDetails.start_gross_sales || 0
-                      ).toFixed(2)}
-                    </p>
-                    <p>
-                      <strong>Ending Gross Sales:</strong> ₱
-                      {parseFloat(
-                        showCashierDetails.end_gross_sales || 0
-                      ).toFixed(2)}
-                    </p>
-                    <p>
-                      <strong>Sales During Session:</strong> ₱
-                      {parseFloat(
-                        showCashierDetails.session_sales || 0
-                      ).toFixed(2)}
-                    </p>
-                    <p>
-                      <strong>Total Transactions:</strong>{" "}
-                      {showCashierDetails.session_orders?.length || 0}
-                    </p>
-
-                    {/* CALCULATE TOTAL DISCOUNT AND TOTAL VOID AMOUNT */}
-                    {(() => {
-                      // Calculate total discount
-                      const totalDiscount = showCashierDetails.session_orders
-                        ? showCashierDetails.session_orders.reduce(
-                            (sum, order) => {
-                              if (order.discountApplied) {
-                                return (
-                                  sum + (parseFloat(order.total) / 0.8) * 0.2
-                                );
-                              }
-                              return sum;
-                            },
-                            0
-                          )
-                        : 0;
-
-                      // Calculate total void amount
-                      const totalVoidAmount = sales
-                        .filter(
-                          (order) =>
-                            order.userId === showCashierDetails.user_id &&
-                            isOrderVoided(order) &&
-                            new Date(order.created_at) >=
-                              new Date(showCashierDetails.login_time) &&
-                            (!showCashierDetails.logout_time ||
-                              new Date(order.created_at) <=
-                                new Date(showCashierDetails.logout_time)) &&
-                            order.branch === showCashierDetails.branch
-                        )
-                        .reduce(
-                          (sum, order) => sum + parseFloat(order.total || 0),
+                  {/* CALCULATE TOTAL DISCOUNT AND TOTAL VOID AMOUNT */}
+                  {(() => {
+                    // Calculate total discount
+                    const totalDiscount = showCashierDetails.session_orders
+                      ? showCashierDetails.session_orders.reduce(
+                          (sum, order) => {
+                            if (order.discountApplied) {
+                              return (
+                                sum + (parseFloat(order.total) / 0.8) * 0.2
+                              );
+                            }
+                            return sum;
+                          },
                           0
-                        );
+                        )
+                      : 0;
 
-                      // Calculate total number of voided transactions
-                      const totalVoidTransactions = sales.filter(
+                    // Calculate total void amount
+                    const totalVoidAmount = sales
+                      .filter(
                         (order) =>
                           order.userId === showCashierDetails.user_id &&
                           isOrderVoided(order) &&
@@ -3696,363 +3804,276 @@ Items:
                             new Date(order.created_at) <=
                               new Date(showCashierDetails.logout_time)) &&
                           order.branch === showCashierDetails.branch
-                      ).length;
-
-                      return (
-                        <div className="mt-3 pt-3 border-t border-green-200">
-                          {/* Total Discount */}
-                          <div className="flex justify-between">
-                            <span className="font-medium text-green-800">
-                              Total Applied Discount:
-                            </span>
-                            <span className="font-bold text-green-700">
-                              ₱{totalDiscount.toFixed(2)}
-                            </span>
-                          </div>
-
-                          {/* Total Void Amount */}
-                          <div className="flex justify-between mt-1">
-                            <span className="font-medium text-red-700">
-                              Total Void Amount:
-                            </span>
-                            <span className="font-bold text-red-700">
-                              ₱{totalVoidAmount.toFixed(2)}
-                              {totalVoidTransactions > 0 && (
-                                <span className="text-xs text-red-600 ml-1">
-                                  ({totalVoidTransactions} transaction
-                                  {totalVoidTransactions !== 1 ? "s" : ""})
-                                </span>
-                              )}
-                            </span>
-                          </div>
-                        </div>
+                      )
+                      .reduce(
+                        (sum, order) => sum + parseFloat(order.total || 0),
+                        0
                       );
-                    })()}
 
-                    {/* Payment Methods Summary */}
-                    {showCashierDetails.payment_methods_summary &&
-                      Object.keys(showCashierDetails.payment_methods_summary)
-                        .length > 0 && (
-                        <div className="mt-4 pt-3 border-t border-green-200">
-                          <h4 className="font-bold text-green-800 mb-2">
-                            PAYMENT METHODS
-                          </h4>
-                          <div className="space-y-1">
-                            {Object.entries(
-                              showCashierDetails.payment_methods_summary
-                            ).map(([method, data]) => (
-                              <div
-                                key={method}
-                                className="flex justify-between"
-                              >
-                                <span>{method}:</span>
-                                <div className="text-right">
-                                  <span className="font-medium">
-                                    {data.transactionCount} transaction
-                                    {data.transactionCount !== 1 ? "s" : ""}
-                                  </span>
-                                  <span className="ml-2 font-bold">
-                                    ₱{data.totalAmount.toFixed(2)}
-                                  </span>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
+                    // Calculate total number of voided transactions
+                    const totalVoidTransactions = sales.filter(
+                      (order) =>
+                        order.userId === showCashierDetails.user_id &&
+                        isOrderVoided(order) &&
+                        new Date(order.created_at) >=
+                          new Date(showCashierDetails.login_time) &&
+                        (!showCashierDetails.logout_time ||
+                          new Date(order.created_at) <=
+                            new Date(showCashierDetails.logout_time)) &&
+                        order.branch === showCashierDetails.branch
+                    ).length;
+
+                    return (
+                      <div className="mt-3 pt-3 border-t border-green-200">
+                        {/* Total Discount */}
+                        <div className="flex justify-between">
+                          <span className="font-medium text-green-800">
+                            Total Applied Discount:
+                          </span>
+                          <span className="font-bold text-green-700">
+                            ₱{totalDiscount.toFixed(2)}
+                          </span>
                         </div>
-                      )}
-                  </div>
-                </div>
 
-                {/* Orders Table */}
-                {showCashierDetails.session_orders &&
-                  showCashierDetails.session_orders.length > 0 && (
-                    <div className="mb-6">
-                      <h3 className="font-bold text-gray-800 mb-3 text-lg">
-                        ORDERS DURING SESSION (
-                        {showCashierDetails.session_orders.length} transactions)
-                      </h3>
-                      <div className="overflow-x-auto">
-                        <table className="w-full border-collapse border border-gray-300">
-                          <thead>
-                            <tr className="bg-gray-100">
-                              <th className="border border-gray-300 px-3 py-2 text-left">
-                                Order ID
-                              </th>
-                              {isAdminOrOwner && (
-                                <th className="border border-gray-300 px-3 py-2 text-left">
-                                  Branch
-                                </th>
-                              )}
-                              <th className="border border-gray-300 px-3 py-2 text-left">
-                                Products
-                              </th>
-                              <th className="border border-gray-300 px-3 py-2 text-right">
-                                Total
-                              </th>
-                              <th className="border border-gray-300 px-3 py-2 text-left">
-                                Order Type
-                              </th>
-                              <th className="border border-gray-300 px-3 py-2 text-left">
-                                Payment Method
-                              </th>
-                              <th className="border border-gray-300 px-3 py-2 text-left">
-                                Time
-                              </th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {showCashierDetails.session_orders.map((order) => (
-                              <tr key={order.id} className="hover:bg-gray-50">
-                                <td className="border border-gray-300 px-3 py-2">
-                                  #{order.id}
-                                </td>
-                                {isAdminOrOwner && (
-                                  <td className="border border-gray-300 px-3 py-2">
-                                    {order.branch || "Unknown"}
-                                  </td>
-                                )}
-                                <td className="border border-gray-300 px-3 py-2">
-                                  {formatProductNames(order)}
-                                </td>
-                                <td className="border border-gray-300 px-3 py-2 text-right">
-                                  ₱{parseFloat(order.total).toFixed(2)}
-                                </td>
-                                <td className="border border-gray-300 px-3 py-2">
-                                  {order.orderType}
-                                </td>
-                                <td className="border border-gray-300 px-3 py-2">
-                                  {order.payment_method}
-                                </td>
-                                <td className="border border-gray-300 px-3 py-2">
-                                  {new Date(
-                                    order.created_at
-                                  ).toLocaleTimeString("en-PH")}
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
+                        {/* Total Void Amount */}
+                        <div className="flex justify-between mt-1">
+                          <span className="font-medium text-red-700">
+                            Total Void Amount:
+                          </span>
+                          <span className="font-bold text-red-700">
+                            ₱{totalVoidAmount.toFixed(2)}
+                            {totalVoidTransactions > 0 && (
+                              <span className="text-xs text-red-600 ml-1">
+                                ({totalVoidTransactions} transaction
+                                {totalVoidTransactions !== 1 ? "s" : ""})
+                              </span>
+                            )}
+                          </span>
+                        </div>
                       </div>
-                    </div>
-                  )}
+                    );
+                  })()}
 
-                {/* Footer */}
-                <div className="text-center border-t-2 border-dashed border-gray-400 pt-4">
-                  <p className="text-gray-600 font-semibold">
-                    Report Generated: {new Date().toLocaleString("en-PH")}
-                  </p>
-                  <p className="text-gray-500 text-sm">K-Street POS System</p>
-                  <p className="text-gray-400 text-xs">
-                    Branch: {showCashierDetails.branch || user?.branch}
-                  </p>
+                  {/* Payment Methods Summary */}
+                  {showCashierDetails.payment_methods_summary &&
+                    Object.keys(showCashierDetails.payment_methods_summary)
+                      .length > 0 && (
+                      <div className="mt-4 pt-3 border-t border-green-200">
+                        <h4 className="font-bold text-green-800 mb-2">
+                          PAYMENT METHODS
+                        </h4>
+                        <div className="space-y-1">
+                          {Object.entries(
+                            showCashierDetails.payment_methods_summary
+                          ).map(([method, data]) => (
+                            <div key={method} className="flex justify-between">
+                              <span>{method}:</span>
+                              <div className="text-right">
+                                <span className="font-medium">
+                                  {data.transactionCount} transaction
+                                  {data.transactionCount !== 1 ? "s" : ""}
+                                </span>
+                                <span className="ml-2 font-bold">
+                                  ₱{data.totalAmount.toFixed(2)}
+                                </span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                 </div>
               </div>
-            </div>
 
-            {/* Action Buttons */}
-            <div className="p-5 flex justify-end gap-3 border-t border-gray-100 bg-gray-50">
-              <button
-                onClick={saveCashierReportAsPDF}
-                className="bg-red-600 text-white px-6 py-2.5 rounded-lg hover:bg-red-700 font-medium transition-all duration-200 flex items-center gap-2"
-              >
-                <svg
-                  className="w-5 h-5"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth="2"
-                    d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"
-                  />
-                </svg>
-                Save as PDF
-              </button>
-              <button
-                onClick={() => exportCashierSessionToExcel(showCashierDetails)}
-                className="bg-green-800 text-white px-6 py-2.5 rounded-lg hover:bg-green-900 font-medium transition-all duration-200 flex items-center gap-2"
-              >
-                <svg
-                  className="w-5 h-5"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth="2"
-                    d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-                  />
-                </svg>
-                Export to Excel
-              </button>
-              <button
-                onClick={printCashierReport}
-                className="bg-blue-600 text-white px-6 py-2.5 rounded-lg hover:bg-blue-700 font-medium transition-all duration-200 flex items-center gap-2"
-              >
-                <svg
-                  className="w-5 h-5"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth="2"
-                    d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"
-                  />
-                </svg>
-                Print Report
-              </button>
-              <button
-                onClick={() => setShowCashierDetails(null)}
-                className="bg-gray-100 text-gray-700 px-6 py-2.5 rounded-lg hover:bg-gray-200 font-medium transition-all duration-200"
-              >
-                Close
-              </button>
+              {/* Orders Table */}
+              {showCashierDetails.session_orders &&
+                showCashierDetails.session_orders.length > 0 && (
+                  <div className="mb-6">
+                    <h3 className="font-bold text-gray-800 mb-3 text-lg">
+                      ORDERS DURING SESSION (
+                      {showCashierDetails.session_orders.length} transactions)
+                    </h3>
+                    <div className="overflow-x-auto">
+                      <table className="w-full border-collapse border border-gray-300">
+                        <thead>
+                          <tr className="bg-gray-100">
+                            <th className="border border-gray-300 px-3 py-2 text-left">
+                              Order ID
+                            </th>
+                            {isAdminOrOwner && (
+                              <th className="border border-gray-300 px-3 py-2 text-left">
+                                Branch
+                              </th>
+                            )}
+                            <th className="border border-gray-300 px-3 py-2 text-left">
+                              Products
+                            </th>
+                            <th className="border border-gray-300 px-3 py-2 text-right">
+                              Total
+                            </th>
+                            <th className="border border-gray-300 px-3 py-2 text-left">
+                              Order Type
+                            </th>
+                            <th className="border border-gray-300 px-3 py-2 text-left">
+                              Payment Method
+                            </th>
+                            <th className="border border-gray-300 px-3 py-2 text-left">
+                              Time
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {showCashierDetails.session_orders.map((order) => (
+                            <tr key={order.id} className="hover:bg-gray-50">
+                              <td className="border border-gray-300 px-3 py-2">
+                                #{order.id}
+                              </td>
+                              {isAdminOrOwner && (
+                                <td className="border border-gray-300 px-3 py-2">
+                                  {order.branch || "Unknown"}
+                                </td>
+                              )}
+                              <td className="border border-gray-300 px-3 py-2">
+                                {formatProductNames(order)}
+                              </td>
+                              <td className="border border-gray-300 px-3 py-2 text-right">
+                                ₱{parseFloat(order.total).toFixed(2)}
+                              </td>
+                              <td className="border border-gray-300 px-3 py-2">
+                                {order.orderType}
+                              </td>
+                              <td className="border border-gray-300 px-3 py-2">
+                                {order.payment_method}
+                              </td>
+                              <td className="border border-gray-300 px-3 py-2">
+                                {new Date(order.created_at).toLocaleTimeString(
+                                  "en-PH"
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+              {/* Footer */}
+              <div className="text-center border-t-2 border-dashed border-gray-400 pt-4">
+                <p className="text-gray-600 font-semibold">
+                  Report Generated: {new Date().toLocaleString("en-PH")}
+                </p>
+                <p className="text-gray-500 text-sm">K-Street POS System</p>
+                <p className="text-gray-400 text-xs">
+                  Branch: {showCashierDetails.branch || user?.branch}
+                </p>
+              </div>
             </div>
           </div>
-        </div>
-      )}
 
-      {/* Void Confirmation Modal WITH PIN VERIFICATION */}
-      {showVoidModal && orderToVoid && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full">
-            {/* Modal Header */}
-            <div className="flex justify-between items-center bg-gradient-to-r from-red-600 to-red-600 text-white p-5 rounded-t-2xl">
-              <h3 className="text-lg font-bold">Confirm Order Void</h3>
-              <button
-                onClick={() => {
-                  setShowVoidModal(false);
-                  setOrderToVoid(null);
-                  setVoidReason("");
-                  setVoidPin("");
-                  setPinVerified(false);
-                  setVerifyingUser(null);
-                  setPinError("");
-                }}
-                className="text-2xl hover:bg-white hover:bg-opacity-20 rounded-lg w-8 h-8 flex items-center justify-center transition-all"
-                disabled={isVoiding || isVerifyingPin}
+          {/* Action Buttons */}
+          <div className="p-5 flex justify-end gap-3 border-t border-gray-100 bg-gray-50">
+            <button
+              onClick={saveCashierReportAsPDF}
+              className="bg-red-600 text-white px-6 py-2.5 rounded-lg hover:bg-red-700 font-medium transition-all duration-200 flex items-center gap-2"
+            >
+              <svg
+                className="w-5 h-5"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
               >
-                ×
-              </button>
-            </div>
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth="2"
+                  d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"
+                />
+              </svg>
+              Save as PDF
+            </button>
+            <button
+              onClick={() => exportCashierSessionToExcel(showCashierDetails)}
+              className="bg-green-800 text-white px-6 py-2.5 rounded-lg hover:bg-green-900 font-medium transition-all duration-200 flex items-center gap-2"
+            >
+              <svg
+                className="w-5 h-5"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth="2"
+                  d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                />
+              </svg>
+              Export to Excel
+            </button>
+            <button
+              onClick={printCashierReport}
+              className="bg-blue-600 text-white px-6 py-2.5 rounded-lg hover:bg-blue-700 font-medium transition-all duration-200 flex items-center gap-2"
+            >
+              <svg
+                className="w-5 h-5"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth="2"
+                  d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"
+                />
+              </svg>
+              Print Report
+            </button>
+            <button
+              onClick={() => setShowCashierDetails(null)}
+              className="bg-gray-100 text-gray-700 px-6 py-2.5 rounded-lg hover:bg-gray-200 font-medium transition-all duration-200"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
 
-            {/* Modal Content */}
-            <div className="p-6">
-              {/* PIN Verification Section - Only show if not verified */}
-              {!pinVerified && user?.role === "cashier" && (
-                <div className="mb-6">
-                  <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4">
-                    <div className="flex items-center mb-2">
-                      <svg
-                        className="w-6 h-6 text-yellow-600 mr-2"
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth="2"
-                          d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
-                        />
-                      </svg>
-                      <span className="font-bold text-yellow-800">
-                        Manager/Owner Authorization Required
-                      </span>
-                    </div>
-                    <p className="text-yellow-700 text-sm">
-                      You need Manager/Owner authorization to void this order.
-                      Please enter the Void PIN.
-                    </p>
-                  </div>
+    {/* Void Confirmation Modal WITH PIN VERIFICATION */}
+    {showVoidModal && orderToVoid && (
+      <div className="fixed inset-0 backdrop-blur-sm bg-opacity-50 flex items-center justify-center p-4 z-50">
+        <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full">
+          {/* Modal Header */}
+          <div className="flex justify-between items-center bg-gradient-to-r from-red-600 to-red-600 text-white p-5 rounded-t-2xl">
+            <h3 className="text-lg font-bold">Confirm Order Void</h3>
+            <button
+              onClick={() => {
+                setShowVoidModal(false);
+                setOrderToVoid(null);
+                setVoidReason("");
+                setVoidPin("");
+                setPinVerified(false);
+                setVerifyingUser(null);
+                setPinError("");
+              }}
+              className="text-2xl hover:bg-white hover:bg-opacity-20 rounded-lg w-8 h-8 flex items-center justify-center transition-all"
+              disabled={isVoiding || isVerifyingPin}
+            >
+              ×
+            </button>
+          </div>
 
-                  <div className="mb-4">
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Manager/Owner Void PIN *
-                    </label>
-                    <div className="flex gap-2">
-                      <input
-                        type="password"
-                        value={voidPin}
-                        onChange={(e) => setVoidPin(e.target.value)}
-                        placeholder="Enter 4-6 digit PIN"
-                        className="w-full border border-gray-300 rounded-lg px-4 py-3 focus:ring-2 focus:ring-red-500 focus:border-red-500"
-                        disabled={isVerifyingPin}
-                      />
-                      <button
-                        onClick={verifyVoidPin}
-                        disabled={isVerifyingPin || !voidPin.trim()}
-                        className={`px-4 py-3 rounded-lg font-medium transition-all duration-200 flex items-center gap-2 ${
-                          isVerifyingPin || !voidPin.trim()
-                            ? "bg-gray-300 cursor-not-allowed text-gray-500"
-                            : "bg-gradient-to-r from-yellow-600 to-yellow-700 text-white hover:from-yellow-700 hover:to-yellow-800"
-                        }`}
-                      >
-                        {isVerifyingPin ? (
-                          <>
-                            <svg
-                              className="animate-spin h-5 w-5 text-white"
-                              xmlns="http://www.w3.org/2000/svg"
-                              fill="none"
-                              viewBox="0 0 24 24"
-                            >
-                              <circle
-                                className="opacity-25"
-                                cx="12"
-                                cy="12"
-                                r="10"
-                                stroke="currentColor"
-                                strokeWidth="4"
-                              ></circle>
-                              <path
-                                className="opacity-75"
-                                fill="currentColor"
-                                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                              ></path>
-                            </svg>
-                            Verifying...
-                          </>
-                        ) : (
-                          <>
-                            <svg
-                              className="w-5 h-5"
-                              fill="none"
-                              stroke="currentColor"
-                              viewBox="0 0 24 24"
-                            >
-                              <path
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                                strokeWidth="2"
-                                d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"
-                              />
-                            </svg>
-                            Verify
-                          </>
-                        )}
-                      </button>
-                    </div>
-                    {pinError && (
-                      <p className="text-red-600 text-sm mt-2">{pinError}</p>
-                    )}
-                  </div>
-                  <div className="border-t border-gray-200 my-4 pt-4"></div>
-                </div>
-              )}
-
-              {/* Show authorization info if PIN verified */}
-              {pinVerified && verifyingUser && (
-                <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-4">
+          {/* Modal Content */}
+          <div className="p-6">
+            {/* PIN Verification Section - Only show if not verified */}
+            {!pinVerified && user?.role === "cashier" && (
+              <div className="mb-6">
+                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4">
                   <div className="flex items-center mb-2">
                     <svg
-                      className="w-6 h-6 text-green-600 mr-2"
+                      className="w-6 h-6 text-yellow-600 mr-2"
                       fill="none"
                       stroke="currentColor"
                       viewBox="0 0 24 24"
@@ -4061,29 +4082,99 @@ Items:
                         strokeLinecap="round"
                         strokeLinejoin="round"
                         strokeWidth="2"
-                        d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"
+                        d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
                       />
                     </svg>
-                    <span className="font-bold text-green-800">
-                      PIN Verified ✓
+                    <span className="font-bold text-yellow-800">
+                      Manager/Owner Authorization Required
                     </span>
                   </div>
-                  <p className="text-green-700 text-sm">
-                    Authorized by: <strong>{verifyingUser.email}</strong>
-                    <br />
-                    Role:{" "}
-                    <strong>
-                      {verifyingUser.role === "admin" ? "Owner" : "Manager"}
-                    </strong>
+                  <p className="text-yellow-700 text-sm">
+                    You need Manager/Owner authorization to void this order.
+                    Please enter the Void PIN.
                   </p>
                 </div>
-              )}
 
-              {/* Warning Message */}
-              <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
+                <div className="mb-4">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Manager/Owner Void PIN *
+                  </label>
+                  <div className="flex gap-2">
+                    <input
+                      type="password"
+                      value={voidPin}
+                      onChange={(e) => setVoidPin(e.target.value)}
+                      placeholder="Enter 4-6 digit PIN"
+                      className="w-full border border-gray-300 rounded-lg px-4 py-3 focus:ring-2 focus:ring-red-500 focus:border-red-500"
+                      disabled={isVerifyingPin}
+                    />
+                    <button
+                      onClick={verifyVoidPin}
+                      disabled={isVerifyingPin || !voidPin.trim()}
+                      className={`px-4 py-3 rounded-lg font-medium transition-all duration-200 flex items-center gap-2 ${
+                        isVerifyingPin || !voidPin.trim()
+                          ? "bg-gray-300 cursor-not-allowed text-gray-500"
+                          : "bg-gradient-to-r from-yellow-600 to-yellow-700 text-white hover:from-yellow-700 hover:to-yellow-800"
+                      }`}
+                    >
+                      {isVerifyingPin ? (
+                        <>
+                          <svg
+                            className="animate-spin h-5 w-5 text-white"
+                            xmlns="http://www.w3.org/2000/svg"
+                            fill="none"
+                            viewBox="0 0 24 24"
+                          >
+                            <circle
+                              className="opacity-25"
+                              cx="12"
+                              cy="12"
+                              r="10"
+                              stroke="currentColor"
+                              strokeWidth="4"
+                            ></circle>
+                            <path
+                              className="opacity-75"
+                              fill="currentColor"
+                              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                            ></path>
+                          </svg>
+                          Verifying...
+                        </>
+                      ) : (
+                        <>
+                          <svg
+                            className="w-5 h-5"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth="2"
+                              d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"
+                            />
+                          </svg>
+                          Verify
+                        </>
+                      )}
+                    </button>
+                  </div>
+                  {pinError && (
+                    <p className="text-red-600 text-sm mt-2">{pinError}</p>
+                  )}
+                </div>
+                <div className="border-t border-gray-200 my-4 pt-4"></div>
+              </div>
+            )}
+
+            {/* Show authorization info if PIN verified */}
+            {pinVerified && verifyingUser && (
+              <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-4">
                 <div className="flex items-center mb-2">
                   <svg
-                    className="w-6 h-6 text-red-600 mr-2"
+                    className="w-6 h-6 text-green-600 mr-2"
                     fill="none"
                     stroke="currentColor"
                     viewBox="0 0 24 24"
@@ -4092,182 +4183,234 @@ Items:
                       strokeLinecap="round"
                       strokeLinejoin="round"
                       strokeWidth="2"
-                      d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.732 16.5c-.77.833.192 2.5 1.732 2.5z"
+                      d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"
                     />
                   </svg>
-                  <span className="font-bold text-red-800">
-                    Warning: This action cannot be undone!
+                  <span className="font-bold text-green-800">
+                    PIN Verified ✓
                   </span>
                 </div>
-                <p className="text-red-700 text-sm">
-                  Order #{orderToVoid.id} for ₱
-                  {parseFloat(orderToVoid.total).toFixed(2)} will be marked as
-                  voided and removed from sales calculations.
-                </p>
-                <p className="text-red-600 text-xs mt-1">
-                  Branch: {orderToVoid.branch || user?.branch}
-                </p>
-              </div>
-
-              {/* Reason Input (only enabled if PIN verified or user is manager/admin) */}
-              <div className="mb-6">
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Reason for voiding this order: *
-                </label>
-                <textarea
-                  value={voidReason}
-                  onChange={(e) => setVoidReason(e.target.value)}
-                  placeholder="Enter reason (e.g., customer cancellation, incorrect order, payment issue...)"
-                  className="w-full border border-gray-300 rounded-lg px-4 py-3 focus:ring-2 focus:ring-red-500 focus:border-red-500"
-                  rows="3"
-                  disabled={
-                    isVoiding || (user?.role === "cashier" && !pinVerified)
-                  }
-                />
-                <p className="text-xs text-gray-500 mt-1">
-                  Required. Please provide a clear reason for voiding this
-                  transaction.
+                <p className="text-green-700 text-sm">
+                  Authorized by: <strong>{verifyingUser.email}</strong>
+                  <br />
+                  Role:{" "}
+                  <strong>
+                    {verifyingUser.role === "admin" ? "Owner" : "Manager"}
+                  </strong>
                 </p>
               </div>
+            )}
 
-              <div className="mb-4">
-                <h4 className="font-medium text-gray-700 mb-2">
-                  Order Details:
-                </h4>
-                <div className="bg-gray-50 p-3 rounded-lg">
-                  <div className="grid grid-cols-2 gap-2 text-sm">
-                    <div>
-                      <span className="text-gray-500">Order ID:</span>
-                      <span className="font-medium ml-2">
-                        #{orderToVoid.id}
-                      </span>
-                    </div>
-                    <div>
-                      <span className="text-gray-500">Total:</span>
-                      <span className="font-medium ml-2">
-                        ₱{parseFloat(orderToVoid.total).toFixed(2)}
-                      </span>
-                    </div>
-                    <div>
-                      <span className="text-gray-500">Cashier:</span>
-                      <span className="font-medium ml-2">
-                        {orderToVoid.cashier || "Unknown"}
-                      </span>
-                    </div>
-                    <div>
-                      <span className="text-gray-500">Payment:</span>
-                      <span className="font-medium ml-2">
-                        {orderToVoid.payment_method}
-                      </span>
-                    </div>
-                    <div className="col-span-2">
-                      <span className="text-gray-500">Date:</span>
-                      <span className="font-medium ml-2">
-                        {new Date(orderToVoid.created_at).toLocaleString(
-                          "en-PH"
-                        )}
-                      </span>
-                    </div>
-                    <div className="col-span-2">
-                      <span className="text-gray-500">Branch:</span>
-                      <span className="font-medium ml-2">
-                        {orderToVoid.branch || user?.branch}
-                      </span>
-                    </div>
+            {/* Warning Message */}
+            <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
+              <div className="flex items-center mb-2">
+                <svg
+                  className="w-6 h-6 text-red-600 mr-2"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth="2"
+                    d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.732 16.5c-.77.833.192 2.5 1.732 2.5z"
+                  />
+                </svg>
+                <span className="font-bold text-red-800">
+                  Warning: This action cannot be undone!
+                </span>
+              </div>
+              <p className="text-red-700 text-sm">
+                Order #{orderToVoid.id} for ₱
+                {parseFloat(orderToVoid.total).toFixed(2)} will be marked as
+                voided and removed from sales calculations.
+              </p>
+              <p className="text-red-600 text-xs mt-1">
+                Branch: {orderToVoid.branch || user?.branch}
+              </p>
+            </div>
+
+            {/* Reason Input (only enabled if PIN verified or user is manager/admin) */}
+            <div className="mb-6">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Reason for voiding this order: *
+              </label>
+              <textarea
+                value={voidReason}
+                onChange={(e) => setVoidReason(e.target.value)}
+                placeholder="Enter reason (e.g., customer cancellation, incorrect order, payment issue...)"
+                className="w-full border border-gray-300 rounded-lg px-4 py-3 focus:ring-2 focus:ring-red-500 focus:border-red-500"
+                rows="3"
+                disabled={
+                  isVoiding || (user?.role === "cashier" && !pinVerified)
+                }
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                Required. Please provide a clear reason for voiding this
+                transaction.
+              </p>
+            </div>
+
+            <div className="mb-4">
+              <h4 className="font-medium text-gray-700 mb-2">Order Details:</h4>
+              <div className="bg-gray-50 p-3 rounded-lg">
+                <div className="grid grid-cols-2 gap-2 text-sm">
+                  <div>
+                    <span className="text-gray-500">Order ID:</span>
+                    <span className="font-medium ml-2">#{orderToVoid.id}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-500">Total:</span>
+                    <span className="font-medium ml-2">
+                      ₱{parseFloat(orderToVoid.total).toFixed(2)}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-gray-500">Cashier:</span>
+                    <span className="font-medium ml-2">
+                      {orderToVoid.cashier || "Unknown"}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-gray-500">Payment:</span>
+                    <span className="font-medium ml-2">
+                      {orderToVoid.payment_method}
+                    </span>
+                  </div>
+                  <div className="col-span-2">
+                    <span className="text-gray-500">Date:</span>
+                    <span className="font-medium ml-2">
+                      {new Date(orderToVoid.created_at).toLocaleString("en-PH")}
+                    </span>
+                  </div>
+                  <div className="col-span-2">
+                    <span className="text-gray-500">Branch:</span>
+                    <span className="font-medium ml-2">
+                      {orderToVoid.branch || user?.branch}
+                    </span>
                   </div>
                 </div>
               </div>
             </div>
+          </div>
 
-            {/* Action Buttons */}
-            <div className="p-5 flex justify-end gap-3 border-t border-gray-100">
-              <button
-                onClick={() => {
-                  setShowVoidModal(false);
-                  setOrderToVoid(null);
-                  setVoidReason("");
-                  setVoidPin("");
-                  setPinVerified(false);
-                  setVerifyingUser(null);
-                  setPinError("");
-                }}
-                className="bg-gray-100 text-gray-700 px-6 py-2.5 rounded-lg hover:bg-gray-200 font-medium transition-all duration-200"
-                disabled={isVoiding}
-              >
-                Cancel
-              </button>
-              <button
-                onClick={confirmVoidOrder}
-                disabled={
-                  isVoiding ||
-                  !voidReason.trim() ||
-                  (user?.role === "cashier" && !pinVerified)
-                }
-                className={`px-6 py-2.5 rounded-lg font-medium transition-all duration-200 flex items-center gap-2 ${
-                  isVoiding ||
-                  !voidReason.trim() ||
-                  (user?.role === "cashier" && !pinVerified)
-                    ? "bg-red-400 cursor-not-allowed text-white"
-                    : "bg-gradient-to-r from-red-600 to-red-700 text-white hover:from-red-700 hover:to-red-800"
-                }`}
-              >
-                {isVoiding ? (
-                  <>
-                    <svg
-                      className="animate-spin h-5 w-5 text-white"
-                      xmlns="http://www.w3.org/2000/svg"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                    >
-                      <circle
-                        className="opacity-25"
-                        cx="12"
-                        cy="12"
-                        r="10"
-                        stroke="currentColor"
-                        strokeWidth="4"
-                      ></circle>
-                      <path
-                        className="opacity-75"
-                        fill="currentColor"
-                        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                      ></path>
-                    </svg>
-                    Voiding...
-                  </>
-                ) : (
-                  <>
-                    <svg
-                      className="w-5 h-5"
-                      fill="none"
+          {/* Action Buttons */}
+          <div className="p-5 flex justify-end gap-3 border-t border-gray-100">
+            <button
+              onClick={() => {
+                setShowVoidModal(false);
+                setOrderToVoid(null);
+                setVoidReason("");
+                setVoidPin("");
+                setPinVerified(false);
+                setVerifyingUser(null);
+                setPinError("");
+              }}
+              className="bg-gray-100 text-gray-700 px-6 py-2.5 rounded-lg hover:bg-gray-200 font-medium transition-all duration-200"
+              disabled={isVoiding}
+            >
+              Cancel
+            </button>
+            <button
+              onClick={confirmVoidOrder}
+              disabled={
+                isVoiding ||
+                !voidReason.trim() ||
+                (user?.role === "cashier" && !pinVerified)
+              }
+              className={`px-6 py-2.5 rounded-lg font-medium transition-all duration-200 flex items-center gap-2 ${
+                isVoiding ||
+                !voidReason.trim() ||
+                (user?.role === "cashier" && !pinVerified)
+                  ? "bg-red-400 cursor-not-allowed text-white"
+                  : "bg-gradient-to-r from-red-600 to-red-700 text-white hover:from-red-700 hover:to-red-800"
+              }`}
+            >
+              {isVoiding ? (
+                <>
+                  <svg
+                    className="animate-spin h-5 w-5 text-white"
+                    xmlns="http://www.w3.org/2000/svg"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                  >
+                    <circle
+                      className="opacity-25"
+                      cx="12"
+                      cy="12"
+                      r="10"
                       stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth="2"
-                        d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-                      />
-                    </svg>
-                    Confirm Void
-                  </>
-                )}
-              </button>
-            </div>
+                      strokeWidth="4"
+                    ></circle>
+                    <path
+                      className="opacity-75"
+                      fill="currentColor"
+                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                    ></path>
+                  </svg>
+                  Voiding...
+                </>
+              ) : (
+                <>
+                  <svg
+                    className="w-5 h-5"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth="2"
+                      d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                    />
+                  </svg>
+                  Confirm Void
+                </>
+              )}
+            </button>
           </div>
         </div>
-      )}
+      </div>
+    )}
 
-      {/* Success Modal */}
-      {showSuccessModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full">
-            {/* Modal Header */}
-            <div className="flex justify-between items-center bg-gradient-to-r from-green-500 to-green-600 text-white p-5 rounded-t-2xl">
-              <h3 className="text-lg font-bold flex items-center gap-2">
+    {/* Success Modal */}
+    {showSuccessModal && (
+      <div className="fixed inset-0 backdrop-blur-sm bg-opacity-50 flex items-center justify-center p-4 z-50">
+        <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full">
+          {/* Modal Header */}
+          <div className="flex justify-between items-center bg-gradient-to-r from-green-500 to-green-600 text-white p-5 rounded-t-2xl">
+            <h3 className="text-lg font-bold flex items-center gap-2">
+              <svg
+                className="w-6 h-6"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth="2"
+                  d="M5 13l4 4L19 7"
+                />
+              </svg>
+              Success!
+            </h3>
+            <button
+              onClick={() => setShowSuccessModal(false)}
+              className="text-2xl hover:bg-white hover:bg-opacity-20 rounded-lg w-8 h-8 flex items-center justify-center transition-all"
+            >
+              ×
+            </button>
+          </div>
+
+          {/* Modal Content */}
+          <div className="p-6">
+            <div className="text-center">
+              <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
                 <svg
-                  className="w-6 h-6"
+                  className="w-8 h-8 text-green-600"
                   fill="none"
                   stroke="currentColor"
                   viewBox="0 0 24 24"
@@ -4279,70 +4422,43 @@ Items:
                     d="M5 13l4 4L19 7"
                   />
                 </svg>
-                Success!
-              </h3>
-              <button
-                onClick={() => setShowSuccessModal(false)}
-                className="text-2xl hover:bg-white hover:bg-opacity-20 rounded-lg w-8 h-8 flex items-center justify-center transition-all"
-              >
-                ×
-              </button>
-            </div>
+              </div>
+              <h4 className="text-xl font-bold text-gray-800 mb-2">
+                Order Successfully Voided
+              </h4>
+              <p className="text-gray-600 mb-6">{successMessage}</p>
 
-            {/* Modal Content */}
-            <div className="p-6">
-              <div className="text-center">
-                <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                  <svg
-                    className="w-8 h-8 text-green-600"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth="2"
-                      d="M5 13l4 4L19 7"
-                    />
-                  </svg>
-                </div>
-                <h4 className="text-xl font-bold text-gray-800 mb-2">
-                  Order Successfully Voided
-                </h4>
-                <p className="text-gray-600 mb-6">{successMessage}</p>
-
-                <div className="bg-gray-50 p-4 rounded-lg mb-6">
-                  <div className="text-sm text-gray-700">
-                    <p className="mb-1">
-                      <span className="font-semibold">Note:</span> The voided
-                      order has been:
-                    </p>
-                    <ul className="list-disc pl-5 text-left mt-2">
-                      <li>Marked with a "VOIDED" badge</li>
-                      <li>Removed from active sales calculations</li>
-                      <li>Stored with void reason for audit trail</li>
-                      <li>Still visible in reports for reference</li>
-                    </ul>
-                  </div>
+              <div className="bg-gray-50 p-4 rounded-lg mb-6">
+                <div className="text-sm text-gray-700">
+                  <p className="mb-1">
+                    <span className="font-semibold">Note:</span> The voided
+                    order has been:
+                  </p>
+                  <ul className="list-disc pl-5 text-left mt-2">
+                    <li>Marked with a "VOIDED" badge</li>
+                    <li>Removed from active sales calculations</li>
+                    <li>Stored with void reason for audit trail</li>
+                    <li>Still visible in reports for reference</li>
+                  </ul>
                 </div>
               </div>
             </div>
+          </div>
 
-            {/* Action Buttons */}
-            <div className="p-5 flex justify-end gap-3 border-t border-gray-100">
-              <button
-                onClick={() => setShowSuccessModal(false)}
-                className="bg-gradient-to-r from-green-500 to-green-600 text-white px-6 py-2.5 rounded-lg hover:from-green-600 hover:to-green-700 font-medium transition-all duration-200"
-              >
-                OK
-              </button>
-            </div>
+          {/* Action Buttons */}
+          <div className="p-5 flex justify-end gap-3 border-t border-gray-100">
+            <button
+              onClick={() => setShowSuccessModal(false)}
+              className="bg-gradient-to-r from-green-500 to-green-600 text-white px-6 py-2.5 rounded-lg hover:from-green-600 hover:to-green-700 font-medium transition-all duration-200"
+            >
+              OK
+            </button>
           </div>
         </div>
-      )}
-    </div>
-  );
+      </div>
+    )}
+  </div>
+);
 };
 
 export default Sales;

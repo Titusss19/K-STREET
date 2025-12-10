@@ -470,8 +470,10 @@ app.get("/users", (req, res) => {
 // ============================
 
 // Verify any manager/admin Void PIN without requiring specific user ID
+// Pinalitan na: verify-manager-pin endpoint
 app.post("/users/verify-manager-pin", requireUserBranch, async (req, res) => {
   const { void_pin } = req.body;
+  const requestingUser = req.user;
 
   if (!void_pin) {
     return res.status(400).json({
@@ -480,12 +482,37 @@ app.post("/users/verify-manager-pin", requireUserBranch, async (req, res) => {
     });
   }
 
-  console.log("Verifying manager PIN for order voiding...");
+  console.log("=== VERIFYING VOID PIN ===");
+  console.log("Requesting user:", requestingUser.email);
+  console.log("User role:", requestingUser.role);
+  console.log("Received PIN:", void_pin.substring(0, 2) + "**");
 
-  // Get all manager/admin users with void PIN
-  const query = "SELECT id, email, role, void_pin FROM users WHERE (role = 'manager' OR role = 'owner') AND void_pin IS NOT NULL";
-  
-  db.execute(query, async (err, results) => {
+  // IMPORTANT: Hanapin ang SINO MANG user na may matching PIN
+  let query;
+  let params = [];
+
+  // Kung admin/owner, hanapin sa lahat ng branches
+  if (requestingUser.role === "admin" || requestingUser.role === "owner") {
+    query = `
+      SELECT id, email, role, void_pin, branch, username 
+      FROM users 
+      WHERE void_pin IS NOT NULL
+    `;
+    params = [];
+  } else {
+    // Kung non-admin (cashier/manager), hanapin sa same branch lang
+    query = `
+      SELECT id, email, role, void_pin, branch, username 
+      FROM users 
+      WHERE void_pin IS NOT NULL AND branch = ?
+    `;
+    params = [requestingUser.branch];
+  }
+
+  console.log("Query:", query);
+  console.log("Params:", params);
+
+  db.execute(query, params, async (err, results) => {
     if (err) {
       console.error("Database error:", err);
       return res.status(500).json({
@@ -494,26 +521,38 @@ app.post("/users/verify-manager-pin", requireUserBranch, async (req, res) => {
       });
     }
 
+    console.log(`Found ${results.length} users with Void PIN`);
+
     if (results.length === 0) {
       return res.status(404).json({
         success: false,
-        message: "No Manager/Owner accounts found with Void PIN",
+        message: "No accounts found with Void PIN" + 
+                 (requestingUser.role !== "admin" && requestingUser.role !== "owner" ? 
+                  " in your branch" : ""),
       });
     }
 
-    // Try to match the PIN with any manager/admin
+    // Try to match the PIN with ANY user that has a void PIN
     let matchedUser = null;
+    let matchFound = false;
     
     for (const user of results) {
       try {
-        const isMatch = await bcrypt.compare(void_pin, user.void_pin);
-        if (isMatch) {
-          matchedUser = {
-            id: user.id,
-            email: user.email,
-            role: user.role === "owner" ? "admin" : user.role
-          };
-          break;
+        if (user.void_pin) {
+          const isMatch = await bcrypt.compare(void_pin, user.void_pin);
+          if (isMatch) {
+            matchedUser = {
+              id: user.id,
+              email: user.email,
+              username: user.username,
+              role: user.role === "owner" ? "admin" : user.role,
+              branch: user.branch
+            };
+            matchFound = true;
+            console.log("✅ PIN matched with user:", matchedUser.email);
+            console.log("User role:", matchedUser.role);
+            break;
+          }
         }
       } catch (error) {
         console.error("Error comparing PIN for user:", user.email, error);
@@ -521,7 +560,15 @@ app.post("/users/verify-manager-pin", requireUserBranch, async (req, res) => {
       }
     }
 
-    if (matchedUser) {
+    if (matchFound && matchedUser) {
+      // IMPORTANT: Dapat ang PIN owner ay MANAGER o ADMIN/Owner
+      if (matchedUser.role !== "manager" && matchedUser.role !== "admin") {
+        return res.status(403).json({
+          success: false,
+          message: "Void PIN must belong to a Manager or Owner account",
+        });
+      }
+
       res.json({
         success: true,
         message: "Void PIN verified successfully",
@@ -529,6 +576,7 @@ app.post("/users/verify-manager-pin", requireUserBranch, async (req, res) => {
         timestamp: new Date().toISOString()
       });
     } else {
+      console.log("❌ No matching PIN found");
       res.status(401).json({
         success: false,
         message: "Invalid Void PIN. Please try again.",
@@ -537,11 +585,21 @@ app.post("/users/verify-manager-pin", requireUserBranch, async (req, res) => {
   });
 });
 
-// Check if there are any managers/admins with Void PIN
+// Check if there are any managers/admins with Void PIN in the user's branch
 app.get("/users/check-manager-pin-available", requireUserBranch, (req, res) => {
-  const query = "SELECT COUNT(*) as count FROM users WHERE (role = 'manager' OR role = 'owner') AND void_pin IS NOT NULL";
+  let query;
+  let params = [];
+
+  if (req.user.role === "admin" || req.user.role === "owner") {
+    // Admin can see all branches
+    query = "SELECT COUNT(*) as count FROM users WHERE (role = 'manager' OR role = 'owner') AND void_pin IS NOT NULL";
+  } else {
+    // Non-admin can only see their branch
+    query = "SELECT COUNT(*) as count FROM users WHERE (role = 'manager' OR role = 'owner') AND void_pin IS NOT NULL AND branch = ?";
+    params = [req.user.branch];
+  }
   
-  db.execute(query, (err, results) => {
+  db.execute(query, params, (err, results) => {
     if (err) {
       return res.status(500).json({
         success: false,
@@ -554,7 +612,201 @@ app.get("/users/check-manager-pin-available", requireUserBranch, (req, res) => {
     res.json({
       success: true,
       has_manager_with_pin: count > 0,
-      count: count
+      count: count,
+      message: count > 0 ? 
+        "Manager/Owner accounts with PIN available" : 
+        "No Manager/Owner accounts with PIN found" + 
+        (req.user.role !== "admin" && req.user.role !== "owner" ? " in your branch" : "")
+    });
+  });
+}); 
+
+
+// ============================
+// UPDATE USER ENDPOINT
+// ============================
+app.put("/users/:id", requireUserBranch, async (req, res) => {
+  const { id } = req.params;
+  const { email, username, role, status, branch, void_pin } = req.body;
+  const userBranch = req.user.branch;
+  const userRole = req.user.role;
+
+  console.log("=== UPDATING USER ===");
+  console.log("Target user ID:", id);
+  console.log("Updating user data:", req.body);
+  console.log("Requesting user role:", userRole);
+  console.log("Requesting user branch:", userBranch);
+
+  // Check permissions
+  if (userRole !== "admin" && userRole !== "owner" && userRole !== "manager") {
+    return res.status(403).json({
+      success: false,
+      message: "You don't have permission to update users",
+    });
+  }
+
+  // First, get the existing user to check permissions
+  const getQuery = "SELECT * FROM users WHERE id = ?";
+  
+  db.execute(getQuery, [id], async (err, results) => {
+    if (err) {
+      console.error("Error fetching user:", err);
+      return res.status(500).json({ 
+        success: false, 
+        message: "Database error" 
+      });
+    }
+
+    if (results.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    const existingUser = results[0];
+    console.log("Existing user data:", {
+      id: existingUser.id,
+      role: existingUser.role,
+      branch: existingUser.branch,
+      has_void_pin: !!existingUser.void_pin
+    });
+
+    // Check if non-admin is trying to update user from different branch
+    if (userRole !== "admin" && userRole !== "owner") {
+      if (existingUser.branch !== userBranch) {
+        return res.status(403).json({
+          success: false,
+          message: "You can only update users in your own branch",
+        });
+      }
+    }
+
+    // Convert frontend role to database role
+    let dbRole = role;
+    if (dbRole === "admin") {
+      dbRole = "owner"; // Frontend "admin" = database "owner"
+    }
+
+    // Handle void_pin if provided
+    let hashedVoidPin = existingUser.void_pin; // Keep existing if not changed
+    
+    if (void_pin && void_pin.trim() !== "") {
+      console.log("New void_pin provided, updating...");
+      
+      // Validate void_pin length for manager/admin
+      if ((dbRole === "manager" || dbRole === "owner") && void_pin) {
+        if (void_pin.length < 4) {
+          return res.status(400).json({
+            success: false,
+            message: "Void PIN must be at least 4 digits",
+          });
+        }
+        
+        if (!/^\d+$/.test(void_pin)) {
+          return res.status(400).json({
+            success: false,
+            message: "Void PIN must contain only numbers",
+          });
+        }
+      }
+      
+      // Hash the new void_pin
+      hashedVoidPin = await bcrypt.hash(void_pin, 10);
+    } else if (void_pin === null || void_pin === "") {
+      // If void_pin is explicitly set to empty, remove it
+      console.log("Removing void_pin");
+      hashedVoidPin = null;
+    }
+
+    // Prepare update query
+    let updateQuery;
+    let updateParams;
+
+    if (userRole === "admin" || userRole === "owner") {
+      // Admin/Owner can update any field including branch
+      updateQuery = `
+        UPDATE users 
+        SET email = ?, username = ?, role = ?, status = ?, branch = ?, void_pin = ?
+        WHERE id = ?
+      `;
+      updateParams = [
+        email,
+        username || "",
+        dbRole,
+        status || "Active",
+        branch || "main",
+        hashedVoidPin,
+        id
+      ];
+    } else {
+      // Manager can only update certain fields within their branch
+      updateQuery = `
+        UPDATE users 
+        SET email = ?, username = ?, role = ?, status = ?, void_pin = ?
+        WHERE id = ? AND branch = ?
+      `;
+      updateParams = [
+        email,
+        username || "",
+        dbRole,
+        status || "Active",
+        hashedVoidPin,
+        id,
+        userBranch
+      ];
+    }
+
+    console.log("Executing update query:", updateQuery);
+    console.log("With params:", updateParams);
+
+    db.execute(updateQuery, updateParams, (err, results) => {
+      if (err) {
+        console.error("Error updating user:", err);
+        return res.status(500).json({ 
+          success: false, 
+          message: "Failed to update user",
+          error: err.message 
+        });
+      }
+
+      if (results.affectedRows === 0) {
+        return res.status(404).json({
+          success: false,
+          message: "User not found or you don't have permission to update",
+        });
+      }
+
+      console.log("✅ User updated successfully");
+      
+      // Get updated user data
+      const selectQuery = "SELECT * FROM users WHERE id = ?";
+      db.execute(selectQuery, [id], (err, updatedResults) => {
+        if (err || updatedResults.length === 0) {
+          return res.json({
+            success: true,
+            message: "User updated successfully",
+            userId: id
+          });
+        }
+
+        const updatedUser = updatedResults[0];
+        
+        res.json({
+          success: true,
+          message: "User updated successfully",
+          user: {
+            id: updatedUser.id,
+            email: updatedUser.email,
+            username: updatedUser.username,
+            role: updatedUser.role === "owner" ? "admin" : updatedUser.role, // Convert back for frontend
+            status: updatedUser.status,
+            branch: updatedUser.branch,
+            created_at: updatedUser.created_at,
+            void_pin: updatedUser.void_pin ? "●●●●" : null
+          }
+        });
+      });
     });
   });
 });
@@ -696,8 +948,6 @@ app.post("/register", async (req, res) => {
     });
   }
 });
-
-
 
 app.delete("/users/:id", requireUserBranch, (req, res) => {
   const { id } = req.params;
